@@ -200,6 +200,60 @@ class RunnerTests(unittest.TestCase):
             self.assertIn("grader=openai-api/zhiyuan/gemma-test", full.command)
             self.assertNotIn("preflight_benign_only=true", full.command)
 
+    def test_production_inspect_time_limit_exceeds_bridge_timeout(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            suite = suite_by_id("agentbench-os-dev")
+            with patch.dict(
+                os.environ,
+                {"ZHIYUAN_BRIDGE_TIMEOUT_SECONDS": "1800"},
+                clear=False,
+            ):
+                phases = build_phases(
+                    suite,
+                    select_bridge(suite),
+                    [Candidate("candidate", root, "a" * 40)],
+                    root,
+                    root / "run",
+                    limit=1,
+                )
+
+            preflight = next(
+                phase for phase in phases if phase.id == "preflight-candidate"
+            )
+            full = next(phase for phase in phases if phase.id == "eval-candidate")
+            self.assertIn("--time-limit", preflight.command)
+            self.assertIn("1860", preflight.command)
+            self.assertIn("--time-limit", full.command)
+            self.assertIn("1860", full.command)
+
+    def test_rejects_inspect_time_limit_not_above_bridge_timeout(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            suite = suite_by_id("agentbench-os-dev")
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "ZHIYUAN_BRIDGE_TIMEOUT_SECONDS": "1800",
+                        "ZHIYUAN_INSPECT_TIME_LIMIT_SECONDS": "1800",
+                    },
+                    clear=False,
+                ),
+                self.assertRaisesRegex(
+                    ValueError,
+                    "ZHIYUAN_INSPECT_TIME_LIMIT_SECONDS must be greater",
+                ),
+            ):
+                build_phases(
+                    suite,
+                    select_bridge(suite),
+                    [Candidate("candidate", root, "a" * 40)],
+                    root,
+                    root / "run",
+                    limit=1,
+                )
+
     def test_agentdojo_phase_uses_benign_non_sandbox_preflight(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

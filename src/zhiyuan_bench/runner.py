@@ -336,6 +336,20 @@ def _inspect_command(
         "--log-dir",
         str(log_dir),
     ]
+    if suite.production_policy:
+        bridge_timeout = _positive_int_environment(
+            "ZHIYUAN_BRIDGE_TIMEOUT_SECONDS", default=600
+        )
+        inspect_time_limit = _positive_int_environment(
+            "ZHIYUAN_INSPECT_TIME_LIMIT_SECONDS", default=bridge_timeout + 60
+        )
+        if inspect_time_limit <= bridge_timeout:
+            raise ValueError(
+                "ZHIYUAN_INSPECT_TIME_LIMIT_SECONDS must be greater than "
+                "ZHIYUAN_BRIDGE_TIMEOUT_SECONDS so the bridge can persist its "
+                "terminal state"
+            )
+        command.extend(("--time-limit", str(inspect_time_limit)))
     if preflight:
         command.extend(("--limit", "1", "-T", "require_inspect_tool_call=true"))
         for task_arg in suite.preflight_task_args:
@@ -361,6 +375,17 @@ def _inspect_command(
                 )
             )
     return tuple(command)
+
+
+def _positive_int_environment(name: str, *, default: int) -> int:
+    raw = os.environ.get(name, str(default)).strip()
+    try:
+        value = int(raw)
+    except ValueError as error:
+        raise ValueError(f"{name} must be a positive integer") from error
+    if value <= 0:
+        raise ValueError(f"{name} must be a positive integer")
+    return value
 
 
 def _verify_candidate(candidate: Candidate) -> None:
