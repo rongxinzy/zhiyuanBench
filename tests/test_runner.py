@@ -147,6 +147,49 @@ class RunnerTests(unittest.TestCase):
             self.assertNotIn("message_limit=1", full.command)
             self.assertNotIn("user_max_tokens=256", full.command)
 
+    def test_codeipi_phase_uses_benign_preflight_and_grader_role(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            suite = suite_by_id("codeipi")
+            bridge = select_bridge(suite)
+            candidate = Candidate("candidate", root, "a" * 40)
+            with patch.dict(
+                os.environ,
+                {
+                    "ZHIYUAN_MODEL_BASE_URL": "http://model.test/v1",
+                    "ZHIYUAN_MODEL_ID": "gemma-test",
+                },
+                clear=False,
+            ):
+                phases = build_phases(
+                    suite,
+                    bridge,
+                    [candidate],
+                    root,
+                    root / "run",
+                    limit=3,
+                )
+
+            self.assertEqual(
+                [phase.id for phase in phases],
+                [
+                    "build-candidate",
+                    "preflight-candidate",
+                    "validate-preflight-candidate",
+                    "eval-candidate",
+                ],
+            )
+            preflight = phases[1]
+            self.assertIn("grader=openai-api/zhiyuan/gemma-test", preflight.command)
+            self.assertIn("preflight_benign_only=true", preflight.command)
+            self.assertEqual(
+                preflight.environment["ZHIYUAN_BASE_URL"],
+                "http://model.test/v1",
+            )
+            full = phases[3]
+            self.assertIn("grader=openai-api/zhiyuan/gemma-test", full.command)
+            self.assertNotIn("preflight_benign_only=true", full.command)
+
     def test_resume_clears_stale_terminal_state(self) -> None:
         manifest = {
             "status": "failed",

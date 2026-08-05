@@ -110,7 +110,7 @@ def _candidate_environment(
         )
         if "subagent" in bridge.capabilities:
             environment["ZHIYUAN_ENABLE_SUBAGENT"] = "true"
-        if "user_simulator" in suite.required_capabilities:
+        if suite.model_roles:
             base_url = environment.get("ZHIYUAN_MODEL_BASE_URL")
             if base_url:
                 environment["ZHIYUAN_BASE_URL"] = base_url
@@ -237,7 +237,7 @@ def build_phases(
                 track_containers="sandbox" in suite.required_capabilities,
             )
         )
-    if suite.adapter == "inspect-agentbench" and len(candidates) == 2:
+    if suite.production_policy and len(candidates) == 2:
         report_dir = run_dir / "report"
         expected = limit or suite.expected_samples
         command = (
@@ -294,13 +294,17 @@ def _inspect_command(
     ]
     if preflight:
         command.extend(("--limit", "1", "-T", "require_inspect_tool_call=true"))
+        if suite.id == "codeipi":
+            command.extend(("-T", "preflight_benign_only=true"))
     elif limit is not None:
         command.extend(("--limit", str(limit)))
     if suite.adapter == "inspect-bfcl":
         command.extend(("-T", "categories=all_single_turn"))
-    if "user_simulator" in suite.required_capabilities:
+    if suite.model_roles:
         model_id = os.environ.get("ZHIYUAN_MODEL_ID", "missing-model")
-        command.extend(("--model-role", f"user=openai-api/zhiyuan/{model_id}"))
+        for role in suite.model_roles:
+            command.extend(("--model-role", f"{role}=openai-api/zhiyuan/{model_id}"))
+    if "user_simulator" in suite.required_capabilities:
         if preflight:
             command.extend(
                 (

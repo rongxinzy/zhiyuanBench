@@ -29,6 +29,14 @@ class RegistryTests(unittest.TestCase):
                 self.assertEqual(bridge.id, "headless-pi-production")
                 self.assertIn("user_simulator", bridge.capabilities)
 
+    def test_auto_selects_production_bridge_for_codeipi(self) -> None:
+        suite = suite_by_id("codeipi")
+        bridge = select_bridge(suite)
+
+        self.assertEqual(bridge.id, "headless-pi-production")
+        self.assertEqual(suite.model_roles, ("grader",))
+        self.assertIn("model_roles", bridge.capabilities)
+
     def test_auto_selects_agentrl_bridge_for_non_os_suites(self) -> None:
         for suite_id in (
             "agentbench-alfworld-std",
