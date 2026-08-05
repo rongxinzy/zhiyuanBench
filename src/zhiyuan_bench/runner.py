@@ -110,6 +110,13 @@ def _candidate_environment(
         )
         if "subagent" in bridge.capabilities:
             environment["ZHIYUAN_ENABLE_SUBAGENT"] = "true"
+        if "user_simulator" in suite.required_capabilities:
+            base_url = environment.get("ZHIYUAN_MODEL_BASE_URL")
+            if base_url:
+                environment["ZHIYUAN_BASE_URL"] = base_url
+            environment["ZHIYUAN_API_KEY"] = (
+                environment.get("ZHIYUAN_MODEL_API_KEY") or "local-eval"
+            )
     else:
         environment.pop("ZHIYUAN_CANDIDATE_POLICY_MODULE", None)
     return environment
@@ -200,6 +207,25 @@ def build_phases(
                     track_containers=True,
                 )
             )
+            phases.append(
+                Phase(
+                    id=f"validate-preflight-{candidate.label}",
+                    label=f"Validate production preflight for {candidate.label}",
+                    command=(
+                        python,
+                        "-m",
+                        "tools.zhiyuan.validate_production_log",
+                        "--log-dir",
+                        str(log_dir),
+                        "--candidate-id",
+                        candidate.revision,
+                        "--expected-samples",
+                        "1",
+                        "--require-reviewer-subagent",
+                    ),
+                    environment={},
+                )
+            )
         log_dir = run_dir / "evals" / candidate.label / "full"
         command = _inspect_command(python, suite, log_dir, limit, preflight=False)
         phases.append(
@@ -272,6 +298,20 @@ def _inspect_command(
         command.extend(("--limit", str(limit)))
     if suite.adapter == "inspect-bfcl":
         command.extend(("-T", "categories=all_single_turn"))
+    if "user_simulator" in suite.required_capabilities:
+        model_id = os.environ.get("ZHIYUAN_MODEL_ID", "missing-model")
+        command.extend(("--model-role", f"user=openai-api/zhiyuan/{model_id}"))
+        if preflight:
+            command.extend(
+                (
+                    "-T",
+                    "message_limit=1",
+                    "-T",
+                    "user_max_tokens=256",
+                    "-T",
+                    "user_timeout_seconds=180",
+                )
+            )
     return tuple(command)
 
 

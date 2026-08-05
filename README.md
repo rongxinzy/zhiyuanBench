@@ -9,6 +9,10 @@ It has no installed runtime dependencies beyond Python 3.11. Inspect, RongxinAI,
 | Suite | Runtime | Coverage | Required external capability |
 | --- | --- | --- | --- |
 | `agentbench-os-dev` | Inspect Evals | RongxinAI production policy, Inspect sandbox tools, isolated reviewer subagent | Docker sandbox |
+| `tau2-airline` | Inspect Evals | Stateful customer-service tools, policy adherence, simulated user | Direct Gemma user model role |
+| `tau2-banking` | Inspect Evals | Stateful banking tools, verification and offline KB retrieval | Direct Gemma user model role |
+| `tau2-retail` | Inspect Evals | Stateful retail tools, policy adherence, simulated user | Direct Gemma user model role |
+| `tau2-telecom` | Inspect Evals | Stateful telecom and user tools, troubleshooting workflow | Direct Gemma user model role |
 | `agentbench-alfworld-std` | AgentRL | Pi/model multi-turn native function calling | ALFWorld task worker and assets |
 | `agentbench-dbbench-std` | AgentRL | Pi/model multi-turn native function calling | DBBench workers, MySQL/SQLite, Redis isolation |
 | `agentbench-kg-std` | AgentRL | Pi/model multi-turn native function calling | KG worker and Freebase-compatible SPARQL service |
@@ -40,6 +44,7 @@ python -m zhiyuan_bench list-suites
 python -m zhiyuan_bench list-bridges
 python -m zhiyuan_bench run --suite agentbench-os-dev --workspace D:\rxzy\inspect_evals --candidate baseline=C:\tmp\RongxinAI-eval-candidate-1@FULL_SHA --candidate candidate=C:\tmp\RongxinAI-eval-candidate-2@FULL_SHA
 python -m zhiyuan_bench run --suite agentbench-dbbench-std --workspace D:\rxzy\inspect_evals --candidate candidate=C:\path\to\RongxinAI@FULL_SHA --limit 10 --concurrency 2
+python -m zhiyuan_bench run --suite tau2-airline --workspace D:\rxzy\inspect_evals --candidate candidate=C:\path\to\RongxinAI@FULL_SHA --limit 5
 python -m zhiyuan_bench monitor .zhiyuan-bench\runs\RUN_ID --follow
 python -m zhiyuan_bench resume .zhiyuan-bench\runs\RUN_ID
 ```
@@ -58,6 +63,8 @@ ZHIYUAN_MODEL_SEED=237
 ```
 
 Production OS suites also require `DOCKER_HOST`. Set `ZHIYUAN_SSH_TARGET` to make a separate SSH health check mandatory. The runner automatically sets `ZHIYUAN_ENABLE_SUBAGENT=true` when the selected production bridge advertises the isolated reviewer capability.
+
+Tau2 suites use the configured Gemma endpoint directly for the independent user simulator role while the evaluated assistant runs through the RongxinAI production policy. They do not require Docker or AgentRL, but consume substantially more tokens than single-agent suites.
 
 AgentRL suites additionally require:
 

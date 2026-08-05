@@ -17,6 +17,18 @@ class RegistryTests(unittest.TestCase):
         bridge = select_bridge(suite)
         self.assertIn("subagent", bridge.capabilities)
 
+    def test_auto_selects_production_bridge_for_tau2(self) -> None:
+        for suite_id in (
+            "tau2-airline",
+            "tau2-banking",
+            "tau2-retail",
+            "tau2-telecom",
+        ):
+            with self.subTest(suite=suite_id):
+                bridge = select_bridge(suite_by_id(suite_id))
+                self.assertEqual(bridge.id, "headless-pi-production")
+                self.assertIn("user_simulator", bridge.capabilities)
+
     def test_auto_selects_agentrl_bridge_for_non_os_suites(self) -> None:
         for suite_id in (
             "agentbench-alfworld-std",

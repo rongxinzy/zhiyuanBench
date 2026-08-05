@@ -39,11 +39,13 @@ BRIDGES = (
                 "inspect",
                 "model_api",
                 "inspect_tools",
+                "multi_turn",
                 "sandbox",
                 "production_policy",
                 "progress_events",
                 "run_limits",
                 "subagent",
+                "user_simulator",
             }
         ),
         priority=10,
@@ -83,6 +85,41 @@ SUITES = (
         ),
         expected_samples=None,
         task="tools/zhiyuan/baseline.py@zhiyuan_bfcl",
+    ),
+    *(
+        SuiteDefinition(
+            id=f"tau2-{domain}",
+            description=f"Tau2 {domain} stateful customer-service task",
+            adapter="inspect-agentbench",
+            required_capabilities=frozenset(
+                {
+                    "inspect",
+                    "inspect_tools",
+                    "model_api",
+                    "multi_turn",
+                    "production_policy",
+                    "progress_events",
+                    "run_limits",
+                    "subagent",
+                    "user_simulator",
+                }
+            ),
+            expected_samples=expected_samples,
+            task=f"tools/zhiyuan/baseline.py@zhiyuan_tau2_{domain}",
+            production_policy=True,
+            preflight=True,
+            max_candidates=2,
+            notes=(
+                "Uses a direct Gemma model role for the Tau2 user simulator.",
+                "Tau2 is token intensive; start with a one-sample preflight.",
+            ),
+        )
+        for domain, expected_samples in (
+            ("airline", 50),
+            ("banking", 97),
+            ("retail", 114),
+            ("telecom", 114),
+        )
     ),
     *(
         SuiteDefinition(
