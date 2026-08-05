@@ -50,4 +50,3 @@ class ContainerTracker:
             self.run_command(self._docker("rm", container_id))
             removed.append(container_id)
         return removed, skipped
-

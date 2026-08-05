@@ -26,4 +26,3 @@ def write_manifest(run_dir: Path, manifest: dict[str, Any]) -> None:
         newline="\n",
     )
     os.replace(temporary, path)
-

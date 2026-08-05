@@ -10,6 +10,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.parse
 import urllib.request
 import uuid
 from datetime import UTC, datetime
@@ -35,6 +36,13 @@ MODEL_ENVIRONMENT = (
     "ZHIYUAN_PI_THINKING_LEVEL",
     "ZHIYUAN_MODEL_PROFILE",
     "ZHIYUAN_CANDIDATE_POLICY_MAX_ITERATIONS",
+    "ZHIYUAN_ENABLE_SUBAGENT",
+    "ZHIYUAN_SUBAGENT_TIMEOUT_MS",
+    "ZHIYUAN_AGENTRL_CONTROLLER",
+    "ZHIYUAN_AGENTRL_ROOT",
+    "ZHIYUAN_AGENTRL_PYTHON",
+    "ZHIYUAN_GATEWAY_TIMEOUT_SECONDS",
+    "ZHIYUAN_AGENTBENCH_KG_SPARQL_URL",
     "DOCKER_HOST",
 )
 PROGRESS_PATTERN = re.compile(
@@ -70,7 +78,9 @@ def _python(workspace: Path) -> str:
         workspace / ".venv" / "Scripts" / "python.exe",
         workspace / ".venv" / "bin" / "python",
     )
-    return str(next((path for path in candidates if path.is_file()), Path(sys.executable)))
+    return str(
+        next((path for path in candidates if path.is_file()), Path(sys.executable))
+    )
 
 
 def _npm() -> str:
@@ -78,7 +88,10 @@ def _npm() -> str:
 
 
 def _candidate_environment(
-    candidate: Candidate, suite: SuiteDefinition, log_dir: Path
+    candidate: Candidate,
+    suite: SuiteDefinition,
+    bridge: BridgeDefinition,
+    log_dir: Path,
 ) -> dict[str, str]:
     environment = {
         name: os.environ[name] for name in MODEL_ENVIRONMENT if name in os.environ
@@ -95,6 +108,8 @@ def _candidate_environment(
         environment["ZHIYUAN_CANDIDATE_POLICY_MODULE"] = (
             "dist-eval/zhiyuan-evaluation-policy.mjs"
         )
+        if "subagent" in bridge.capabilities:
+            environment["ZHIYUAN_ENABLE_SUBAGENT"] = "true"
     else:
         environment.pop("ZHIYUAN_CANDIDATE_POLICY_MODULE", None)
     return environment
@@ -107,17 +122,66 @@ def build_phases(
     workspace: Path,
     run_dir: Path,
     limit: int | None,
+    concurrency: int = 1,
 ) -> list[Phase]:
-    del bridge
     phases: list[Phase] = []
     python = _python(workspace)
+    if suite.adapter == "agentrl-agentbench-fc":
+        for candidate in candidates:
+            log_dir = run_dir / "agentrl" / candidate.label
+            command = [
+                python,
+                "-m",
+                "zhiyuan_bench.agentrl_adapter",
+                "--inspect-workspace",
+                str(workspace),
+                "--candidate-root",
+                str(candidate.root),
+                "--candidate-id",
+                candidate.revision,
+                "--task",
+                suite.task,
+                "--output",
+                str(log_dir),
+                "--concurrency",
+                str(concurrency),
+            ]
+            if limit is not None:
+                command.extend(("--limit", str(limit)))
+            environment = _candidate_environment(candidate, suite, bridge, log_dir)
+            bench_source = str(Path(__file__).resolve().parents[1])
+            environment["PYTHONPATH"] = os.pathsep.join(
+                [
+                    bench_source,
+                    *(
+                        [environment["PYTHONPATH"]]
+                        if environment.get("PYTHONPATH")
+                        else []
+                    ),
+                ]
+            )
+            phases.append(
+                Phase(
+                    id=f"eval-{candidate.label}",
+                    label=f"Evaluate {candidate.label}",
+                    command=tuple(command),
+                    environment=environment,
+                )
+            )
+        return phases
     if suite.production_policy:
         for candidate in candidates:
             phases.append(
                 Phase(
                     id=f"build-{candidate.label}",
                     label=f"Build policy for {candidate.label}",
-                    command=(_npm(), "--prefix", str(candidate.root), "run", "build:eval-policy"),
+                    command=(
+                        _npm(),
+                        "--prefix",
+                        str(candidate.root),
+                        "run",
+                        "build:eval-policy",
+                    ),
                     environment={},
                 )
             )
@@ -130,7 +194,9 @@ def build_phases(
                     id=f"preflight-{candidate.label}",
                     label=f"Production preflight for {candidate.label}",
                     command=command,
-                    environment=_candidate_environment(candidate, suite, log_dir),
+                    environment=_candidate_environment(
+                        candidate, suite, bridge, log_dir
+                    ),
                     track_containers=True,
                 )
             )
@@ -141,7 +207,7 @@ def build_phases(
                 id=f"eval-{candidate.label}",
                 label=f"Evaluate {candidate.label}",
                 command=command,
-                environment=_candidate_environment(candidate, suite, log_dir),
+                environment=_candidate_environment(candidate, suite, bridge, log_dir),
                 track_containers="sandbox" in suite.required_capabilities,
             )
         )
@@ -160,6 +226,7 @@ def build_phases(
             "--expected-samples",
             str(expected),
             "--require-production-agent",
+            "--require-reviewer-subagent",
         )
         phases.append(
             Phase(
@@ -223,6 +290,13 @@ def _verify_candidate(candidate: Candidate) -> None:
 
 
 def _health_checks(suite: SuiteDefinition, sink: EventSink) -> None:
+    missing_environment = [
+        name for name in suite.required_environment if not os.environ.get(name)
+    ]
+    if missing_environment:
+        raise RuntimeError(
+            "Missing suite environment: " + ", ".join(missing_environment)
+        )
     base_url = os.environ.get("ZHIYUAN_MODEL_BASE_URL", "").rstrip("/")
     if not base_url or not os.environ.get("ZHIYUAN_MODEL_ID"):
         raise RuntimeError("ZHIYUAN_MODEL_BASE_URL and ZHIYUAN_MODEL_ID are required")
@@ -231,6 +305,36 @@ def _health_checks(suite: SuiteDefinition, sink: EventSink) -> None:
             raise RuntimeError(f"Model API health check returned {response.status}")
         json.load(response)
     sink.emit("health_check", status="model_api_ok")
+    if suite.adapter == "agentrl-agentbench-fc":
+        controller = os.environ["ZHIYUAN_AGENTRL_CONTROLLER"].rstrip("/")
+        with urllib.request.urlopen(
+            f"{controller}/list_workers", timeout=15
+        ) as response:
+            workers = json.load(response)
+        if not isinstance(workers, dict) or suite.task not in workers:
+            raise RuntimeError(f"AgentRL controller has no workers for {suite.task}")
+        indices_url = f"{controller}/get_indices?" + urllib.parse.urlencode(
+            {"name": suite.task}
+        )
+        with urllib.request.urlopen(indices_url, timeout=15) as response:
+            indices = json.load(response)
+        if not isinstance(indices, list) or not indices:
+            raise RuntimeError(
+                f"AgentRL controller returned no indices for {suite.task}"
+            )
+        sink.emit(
+            "health_check",
+            status="agentrl_task_workers_ok",
+            details={"available_samples": len(indices)},
+        )
+    for name in suite.health_url_environment:
+        url = os.environ.get(name)
+        if not url:
+            raise RuntimeError(f"{name} is required by this suite")
+        with urllib.request.urlopen(url, timeout=15) as response:
+            if response.status >= 400:
+                raise RuntimeError(f"{name} health check returned {response.status}")
+        sink.emit("health_check", status=f"{name.lower()}_ok")
     ssh_target = os.environ.get("ZHIYUAN_SSH_TARGET")
     if ssh_target:
         subprocess.run(["ssh", ssh_target, "true"], check=True, timeout=15)
@@ -250,7 +354,10 @@ def _health_checks(suite: SuiteDefinition, sink: EventSink) -> None:
 
 
 def _phase_output_worker(
-    source: Any, target: Any, channel: str, output_queue: queue.Queue[tuple[str, str | None]]
+    source: Any,
+    target: Any,
+    channel: str,
+    output_queue: queue.Queue[tuple[str, str | None]],
 ) -> None:
     try:
         for line in iter(source.readline, ""):
@@ -330,7 +437,10 @@ def execute_phase(
                                     "phase_progress",
                                     phase=phase.id,
                                     status="running",
-                                    details={"completed": observed[0], "total": observed[1]},
+                                    details={
+                                        "completed": observed[0],
+                                        "total": observed[1],
+                                    },
                                 )
                 except queue.Empty:
                     pass
@@ -375,9 +485,12 @@ def create_run(
     workspace: Path,
     output_root: Path,
     limit: int | None = None,
+    concurrency: int = 1,
 ) -> Path:
     suite = suite_by_id(suite_id)
     bridge = select_bridge(suite, bridge_id)
+    if concurrency <= 0:
+        raise ValueError("concurrency must be positive")
     if len(candidates) < suite.min_candidates or (
         suite.max_candidates is not None and len(candidates) > suite.max_candidates
     ):
@@ -396,6 +509,7 @@ def create_run(
         "workspace": str(workspace.resolve()),
         "output_root": str(output_root.resolve()),
         "limit": limit,
+        "concurrency": concurrency,
         "candidates": [candidate.as_dict() for candidate in candidates],
         "created_at": datetime.now(UTC).isoformat(),
         "phases": {},
@@ -412,6 +526,12 @@ def pending_phases(manifest: dict[str, Any], phases: list[Phase]) -> list[Phase]
         if not isinstance(states.get(phase.id), dict)
         or states[phase.id].get("status") != "succeeded"
     ]
+
+
+def mark_manifest_running(manifest: dict[str, Any]) -> None:
+    manifest["status"] = "running"
+    manifest.pop("failure", None)
+    manifest.pop("completed_at", None)
 
 
 def run_manifest(run_dir: Path, *, health_checks: bool = True) -> None:
@@ -436,6 +556,7 @@ def run_manifest(run_dir: Path, *, health_checks: bool = True) -> None:
         workspace,
         run_dir,
         manifest.get("limit"),
+        int(manifest.get("concurrency", 1)),
     )
     sink = EventSink(run_dir / "events.jsonl", run_id, stream=sys.stdout)
     tracker = None
@@ -444,7 +565,7 @@ def run_manifest(run_dir: Path, *, health_checks: bool = True) -> None:
         tracker = ContainerTracker(docker_host)
     with RunLock(output_root / "runner.lock", run_id):
         try:
-            manifest["status"] = "running"
+            mark_manifest_running(manifest)
             write_manifest(run_dir, manifest)
             sink.emit(
                 "run_started",
@@ -492,7 +613,10 @@ def run_manifest(run_dir: Path, *, health_checks: bool = True) -> None:
                             "container_cleanup",
                             phase=phase.id,
                             status="completed",
-                            details={"removed_count": len(removed), "skipped_count": len(skipped)},
+                            details={
+                                "removed_count": len(removed),
+                                "skipped_count": len(skipped),
+                            },
                         )
                 phase_state["status"] = "succeeded" if return_code == 0 else "failed"
                 write_manifest(run_dir, manifest)

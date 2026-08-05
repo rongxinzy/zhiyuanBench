@@ -6,8 +6,15 @@ import unittest
 from pathlib import Path
 
 from zhiyuan_bench.events import EventSink
-from zhiyuan_bench.models import Phase
-from zhiyuan_bench.runner import PROGRESS_PATTERN, execute_phase, pending_phases
+from zhiyuan_bench.models import Candidate, Phase
+from zhiyuan_bench.registry import select_bridge, suite_by_id
+from zhiyuan_bench.runner import (
+    PROGRESS_PATTERN,
+    build_phases,
+    execute_phase,
+    mark_manifest_running,
+    pending_phases,
+)
 
 
 class RunnerTests(unittest.TestCase):
@@ -28,9 +35,7 @@ class RunnerTests(unittest.TestCase):
                 ),
                 environment={},
             )
-            return_code = execute_phase(
-                phase, workspace=root, run_dir=root, sink=sink
-            )
+            return_code = execute_phase(phase, workspace=root, run_dir=root, sink=sink)
             self.assertEqual(return_code, 0)
             events = [
                 json.loads(line)
@@ -65,6 +70,42 @@ class RunnerTests(unittest.TestCase):
             [phase.id for phase in pending_phases(manifest, phases)],
             ["running", "new"],
         )
+
+    def test_agentrl_phase_uses_auto_selected_gateway_adapter(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            suite = suite_by_id("agentbench-dbbench-std")
+            bridge = select_bridge(suite)
+            candidate = Candidate("candidate", root, "a" * 40)
+
+            phases = build_phases(
+                suite,
+                bridge,
+                [candidate],
+                root,
+                root / "run",
+                limit=3,
+                concurrency=2,
+            )
+
+            self.assertEqual(len(phases), 1)
+            self.assertEqual(
+                phases[0].command[1:3], ("-m", "zhiyuan_bench.agentrl_adapter")
+            )
+            self.assertIn("--limit", phases[0].command)
+            self.assertIn("--concurrency", phases[0].command)
+            self.assertIn("zhiyuanBench\\src", phases[0].environment["PYTHONPATH"])
+
+    def test_resume_clears_stale_terminal_state(self) -> None:
+        manifest = {
+            "status": "failed",
+            "failure": {"type": "OSError"},
+            "completed_at": "old",
+        }
+
+        mark_manifest_running(manifest)
+
+        self.assertEqual(manifest, {"status": "running"})
 
 
 if __name__ == "__main__":

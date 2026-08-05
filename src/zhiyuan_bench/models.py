@@ -26,6 +26,9 @@ class SuiteDefinition:
     preflight: bool = False
     min_candidates: int = 1
     max_candidates: int | None = None
+    required_environment: tuple[str, ...] = ()
+    health_url_environment: tuple[str, ...] = ()
+    notes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -49,4 +52,3 @@ class Phase:
     command: tuple[str, ...]
     environment: dict[str, str]
     track_containers: bool = False
-

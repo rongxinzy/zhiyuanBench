@@ -25,11 +25,14 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--workspace", type=Path, required=True)
     run.add_argument("--output-root", type=Path, default=Path(".zhiyuan-bench"))
     run.add_argument("--limit", type=int)
+    run.add_argument("--concurrency", type=int, default=1)
     run.add_argument("--no-health-checks", action="store_true", help=argparse.SUPPRESS)
 
     resume = commands.add_parser("resume", help="Resume incomplete phases")
     resume.add_argument("run_dir", type=Path)
-    resume.add_argument("--no-health-checks", action="store_true", help=argparse.SUPPRESS)
+    resume.add_argument(
+        "--no-health-checks", action="store_true", help=argparse.SUPPRESS
+    )
 
     watch = commands.add_parser("monitor", help="Read prompt-free JSONL progress")
     watch.add_argument("run_dir", type=Path)
@@ -66,6 +69,7 @@ def main(argv: list[str] | None = None) -> int:
                 workspace=args.workspace,
                 output_root=args.output_root,
                 limit=args.limit,
+                concurrency=args.concurrency,
             )
             print(f"Run directory: {run_dir}", flush=True)
             run_manifest(run_dir, health_checks=not args.no_health_checks)
@@ -75,4 +79,3 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, ValueError, RuntimeError) as error:
         print(f"zhiyuan-bench: {error}", file=sys.stderr)
         return 1
-

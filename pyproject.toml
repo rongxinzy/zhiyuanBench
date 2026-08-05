@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "zhiyuan-bench"
-version = "0.1.0"
+version = "0.2.0"
 description = "Lightweight, capability-aware runner for Zhiyuan agent evaluations"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -15,4 +15,3 @@ zhiyuan-bench = "zhiyuan_bench.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-
