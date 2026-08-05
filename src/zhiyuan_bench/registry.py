@@ -107,6 +107,36 @@ SUITES = (
         ),
     ),
     SuiteDefinition(
+        id="swe-bench-verified-mini",
+        description="SWE-bench Verified Mini software engineering tasks (50 samples)",
+        adapter="inspect-production",
+        required_capabilities=frozenset(
+            {
+                "inspect",
+                "inspect_tools",
+                "model_api",
+                "multi_turn",
+                "production_policy",
+                "progress_events",
+                "run_limits",
+                "sandbox",
+                "subagent",
+            }
+        ),
+        expected_samples=50,
+        task="tools/zhiyuan/baseline.py@zhiyuan_swe_bench_verified_mini",
+        production_policy=True,
+        preflight=True,
+        max_candidates=2,
+        required_host_platforms=("linux", "darwin"),
+        required_python_modules=("swebench", "jsonlines"),
+        notes=(
+            "Uses pinned Verified Mini data and public pre-built DockerHub images.",
+            "The official scorer requires a POSIX controller host.",
+            "Images are large; start with a one-sample production preflight.",
+        ),
+    ),
+    SuiteDefinition(
         id="bfcl-single-turn",
         description="BFCL supported single-turn categories",
         adapter="inspect-bfcl",

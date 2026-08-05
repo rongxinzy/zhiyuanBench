@@ -1,4 +1,5 @@
 import io
+import importlib.util
 import json
 import os
 import sys
@@ -16,6 +17,7 @@ from zhiyuan_bench.runner import (
     execute_phase,
     mark_manifest_running,
     pending_phases,
+    _health_checks,
 )
 
 
@@ -189,6 +191,31 @@ class RunnerTests(unittest.TestCase):
             full = phases[3]
             self.assertIn("grader=openai-api/zhiyuan/gemma-test", full.command)
             self.assertNotIn("preflight_benign_only=true", full.command)
+
+    def test_health_check_rejects_missing_suite_python_module(self) -> None:
+        suite = suite_by_id("swe-bench-verified-mini")
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(sys, "platform", "linux"),
+            patch.object(importlib.util, "find_spec", return_value=None),
+            self.assertRaisesRegex(RuntimeError, "swebench, jsonlines"),
+        ):
+            root = Path(directory)
+            sink = EventSink(root / "events.jsonl", "run-1", stream=io.StringIO())
+            _health_checks(suite, sink)
+
+    def test_health_check_rejects_unsupported_host_platform(self) -> None:
+        suite = suite_by_id("swe-bench-verified-mini")
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(sys, "platform", "win32"),
+            self.assertRaisesRegex(
+                RuntimeError, "requires host platform linux or darwin"
+            ),
+        ):
+            root = Path(directory)
+            sink = EventSink(root / "events.jsonl", "run-1", stream=io.StringIO())
+            _health_checks(suite, sink)
 
     def test_resume_clears_stale_terminal_state(self) -> None:
         manifest = {

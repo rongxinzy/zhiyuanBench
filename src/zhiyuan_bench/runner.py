@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import importlib.util
 import os
 import queue
 import re
@@ -334,6 +335,27 @@ def _verify_candidate(candidate: Candidate) -> None:
 
 
 def _health_checks(suite: SuiteDefinition, sink: EventSink) -> None:
+    if suite.required_host_platforms and not any(
+        sys.platform.startswith(platform) for platform in suite.required_host_platforms
+    ):
+        raise RuntimeError(
+            f"Suite {suite.id} requires host platform "
+            + " or ".join(suite.required_host_platforms)
+            + f"; current platform is {sys.platform}"
+        )
+    if suite.required_host_platforms:
+        sink.emit("health_check", status="host_platform_ok")
+    missing_modules = [
+        name
+        for name in suite.required_python_modules
+        if importlib.util.find_spec(name) is None
+    ]
+    if missing_modules:
+        raise RuntimeError(
+            "Missing suite Python modules: " + ", ".join(missing_modules)
+        )
+    if suite.required_python_modules:
+        sink.emit("health_check", status="python_modules_ok")
     missing_environment = [
         name for name in suite.required_environment if not os.environ.get(name)
     ]

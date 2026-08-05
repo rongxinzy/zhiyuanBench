@@ -14,6 +14,7 @@ It has no installed runtime dependencies beyond Python 3.11. Inspect, RongxinAI,
 | `tau2-retail` | Inspect Evals | Stateful retail tools, policy adherence, simulated user | Direct Gemma user model role |
 | `tau2-telecom` | Inspect Evals | Stateful telecom and user tools, troubleshooting workflow | Direct Gemma user model role |
 | `codeipi` | Inspect Evals | Indirect prompt-injection resistance and coding task completion | Remote Docker and direct Gemma grader role |
+| `swe-bench-verified-mini` | Inspect Evals | Repository exploration, editing, debugging, and test-driven issue resolution | POSIX controller, remote Docker, official Python dependency, and large public images |
 | `agentbench-alfworld-std` | AgentRL | Pi/model multi-turn native function calling | ALFWorld task worker and assets |
 | `agentbench-dbbench-std` | AgentRL | Pi/model multi-turn native function calling | DBBench workers, MySQL/SQLite, Redis isolation |
 | `agentbench-kg-std` | AgentRL | Pi/model multi-turn native function calling | KG worker and Freebase-compatible SPARQL service |

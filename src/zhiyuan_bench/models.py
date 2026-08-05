@@ -27,6 +27,8 @@ class SuiteDefinition:
     min_candidates: int = 1
     max_candidates: int | None = None
     required_environment: tuple[str, ...] = ()
+    required_host_platforms: tuple[str, ...] = ()
+    required_python_modules: tuple[str, ...] = ()
     health_url_environment: tuple[str, ...] = ()
     model_roles: tuple[str, ...] = ()
     notes: tuple[str, ...] = ()
