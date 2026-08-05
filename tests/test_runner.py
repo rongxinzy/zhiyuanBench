@@ -5,6 +5,7 @@ import os
 import sys
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -13,6 +14,8 @@ from zhiyuan_bench.models import Candidate, Phase
 from zhiyuan_bench.registry import select_bridge, suite_by_id
 from zhiyuan_bench.runner import (
     PROGRESS_PATTERN,
+    _inspect_journal_completed,
+    _progress_advanced,
     create_run,
     build_phases,
     execute_phase,
@@ -26,6 +29,20 @@ from zhiyuan_bench.runner import (
 class RunnerTests(unittest.TestCase):
     def test_progress_parser_ignores_docker_build_steps(self) -> None:
         self.assertIsNone(PROGRESS_PATTERN.search("#5 [1/7] FROM python:3.12"))
+
+    def test_inspect_journal_reports_only_sample_count(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with zipfile.ZipFile(root / "run.eval", "w") as archive:
+                archive.writestr("_journal/start.json", "{}")
+                archive.writestr("samples/opaque-1.json", "{}")
+                archive.writestr("_journal/summaries/1.json", "{}")
+                archive.writestr("samples/opaque-2.json", "{}")
+
+            self.assertEqual(_inspect_journal_completed(root), 2)
+            self.assertTrue(_progress_advanced(None, (2, 45)))
+            self.assertTrue(_progress_advanced((2, 45), (3, 45)))
+            self.assertFalse(_progress_advanced((45, 45), (1, 45)))
 
     def test_execute_phase_emits_numeric_progress(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -341,6 +358,34 @@ class RunnerTests(unittest.TestCase):
             self.assertNotIn("--require-reviewer-subagent", baseline_full.command)
             self.assertIn("--require-reviewer-subagent", candidate_preflight.command)
             self.assertIn("--require-reviewer-subagent", candidate_full.command)
+            baseline_eval_preflight = next(
+                phase for phase in phases if phase.id == "preflight-candidate1"
+            )
+            candidate_eval_preflight = next(
+                phase for phase in phases if phase.id == "preflight-candidate2"
+            )
+            baseline_eval = next(
+                phase for phase in phases if phase.id == "eval-candidate1"
+            )
+            candidate_eval = next(
+                phase for phase in phases if phase.id == "eval-candidate2"
+            )
+            self.assertNotIn(
+                "ZHIYUAN_REQUIRE_REVIEWER_SUBAGENT", baseline_eval_preflight.environment
+            )
+            self.assertNotIn(
+                "ZHIYUAN_REQUIRE_REVIEWER_SUBAGENT", baseline_eval.environment
+            )
+            self.assertEqual(
+                candidate_eval_preflight.environment[
+                    "ZHIYUAN_REQUIRE_REVIEWER_SUBAGENT"
+                ],
+                "true",
+            )
+            self.assertEqual(
+                candidate_eval.environment["ZHIYUAN_REQUIRE_REVIEWER_SUBAGENT"],
+                "true",
+            )
             self.assertNotIn(
                 "--require-baseline-reviewer-subagent", report.command
             )

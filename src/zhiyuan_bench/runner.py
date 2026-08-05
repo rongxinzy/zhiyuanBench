@@ -14,6 +14,7 @@ import time
 import urllib.parse
 import urllib.request
 import uuid
+import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -94,6 +95,8 @@ def _candidate_environment(
     suite: SuiteDefinition,
     bridge: BridgeDefinition,
     log_dir: Path,
+    *,
+    reviewer_required: bool = False,
 ) -> dict[str, str]:
     environment = {
         name: os.environ[name] for name in MODEL_ENVIRONMENT if name in os.environ
@@ -112,6 +115,8 @@ def _candidate_environment(
         )
         if "subagent" in bridge.capabilities:
             environment["ZHIYUAN_ENABLE_SUBAGENT"] = "true"
+        if reviewer_required:
+            environment["ZHIYUAN_REQUIRE_REVIEWER_SUBAGENT"] = "true"
         if suite.model_roles:
             base_url = environment.get("ZHIYUAN_MODEL_BASE_URL")
             if base_url:
@@ -208,9 +213,15 @@ def build_phases(
                     label=f"Production preflight for {candidate.label}",
                     command=command,
                     environment=_candidate_environment(
-                        candidate, suite, bridge, log_dir
+                        candidate,
+                        suite,
+                        bridge,
+                        log_dir,
+                        reviewer_required=candidate.label in reviewer_required,
                     ),
                     track_containers=True,
+                    progress_log_dir=log_dir,
+                    expected_samples=1,
                 )
             )
             phases.append(
@@ -243,8 +254,16 @@ def build_phases(
                 id=f"eval-{candidate.label}",
                 label=f"Evaluate {candidate.label}",
                 command=command,
-                environment=_candidate_environment(candidate, suite, bridge, log_dir),
+                environment=_candidate_environment(
+                    candidate,
+                    suite,
+                    bridge,
+                    log_dir,
+                    reviewer_required=candidate.label in reviewer_required,
+                ),
                 track_containers="sandbox" in suite.required_capabilities,
+                progress_log_dir=log_dir,
+                expected_samples=limit or suite.expected_samples,
             )
         )
         if suite.production_policy:
@@ -519,6 +538,31 @@ def _phase_output_worker(
         output_queue.put((channel, None))
 
 
+def _inspect_journal_completed(log_dir: Path | None) -> int | None:
+    if log_dir is None or not log_dir.is_dir():
+        return None
+    logs = list(log_dir.glob("*.eval"))
+    if not logs:
+        return None
+    latest = max(logs, key=lambda path: path.stat().st_mtime_ns)
+    try:
+        with zipfile.ZipFile(latest) as archive:
+            return sum(
+                name.startswith("samples/") and name.endswith(".json")
+                for name in archive.namelist()
+            )
+    except (OSError, zipfile.BadZipFile):
+        return None
+
+
+def _progress_advanced(
+    current: tuple[int, int] | None, observed: tuple[int, int]
+) -> bool:
+    return observed[0] <= observed[1] and (
+        current is None or observed[0] > current[0]
+    )
+
+
 def execute_phase(
     phase: Phase,
     *,
@@ -582,7 +626,7 @@ def execute_phase(
                         match = PROGRESS_PATTERN.search(line)
                         if match:
                             observed = (int(match.group(1)), int(match.group(2)))
-                            if observed != progress and observed[0] <= observed[1]:
+                            if _progress_advanced(progress, observed):
                                 progress = observed
                                 sink.emit(
                                     "phase_progress",
@@ -597,6 +641,24 @@ def execute_phase(
                     pass
                 now = time.monotonic()
                 if now - last_heartbeat >= 10:
+                    completed = _inspect_journal_completed(phase.progress_log_dir)
+                    if (
+                        completed is not None
+                        and phase.expected_samples is not None
+                        and _progress_advanced(
+                            progress, (completed, phase.expected_samples)
+                        )
+                    ):
+                        progress = (completed, phase.expected_samples)
+                        sink.emit(
+                            "phase_progress",
+                            phase=phase.id,
+                            status="running",
+                            details={
+                                "completed": completed,
+                                "total": phase.expected_samples,
+                            },
+                        )
                     sink.emit(
                         "phase_heartbeat",
                         phase=phase.id,

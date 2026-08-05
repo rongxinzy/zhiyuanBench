@@ -66,3 +66,5 @@ class Phase:
     command: tuple[str, ...]
     environment: dict[str, str]
     track_containers: bool = False
+    progress_log_dir: Path | None = None
+    expected_samples: int | None = None

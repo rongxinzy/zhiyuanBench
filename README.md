@@ -73,6 +73,8 @@ ZHIYUAN_INSPECT_MODEL_TIMEOUT_SECONDS=300
 
 Production OS suites also require `DOCKER_HOST`. Set `ZHIYUAN_SSH_TARGET` to make a separate SSH health check mandatory. The runner automatically sets `ZHIYUAN_ENABLE_SUBAGENT=true` when the selected production bridge advertises the isolated reviewer capability.
 
+For candidates selected by `--reviewer-required`, the runner also sets `ZHIYUAN_REQUIRE_REVIEWER_SUBAGENT=true`. The bridge then guarantees one isolated reviewer run before every non-cancelled terminal result, including agent budget exhaustion; reviewer timeout or failure remains a hard validation failure.
+
 `ZHIYUAN_BRIDGE_TIMEOUT_SECONDS` controls the complete main-agent session and is independent from the model HTTP idle timeout and `ZHIYUAN_SUBAGENT_TIMEOUT_MS`. Long production workflows should size all three explicitly; a main session timeout before `request_critique` is a bridge failure and cannot satisfy a reviewer-required gate.
 
 `ZHIYUAN_INSPECT_TIME_LIMIT_SECONDS` controls Inspect's outer per-sample limit. It defaults to the bridge session timeout plus 60 seconds and must remain greater than the bridge timeout, ensuring the bridge can persist a terminal success or failure before Inspect closes the sample.
