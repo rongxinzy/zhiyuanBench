@@ -238,6 +238,33 @@ def build_phases(
                 track_containers="sandbox" in suite.required_capabilities,
             )
         )
+        if suite.production_policy:
+            expected = limit or suite.expected_samples
+            if expected is None:
+                raise ValueError(
+                    f"Suite {suite.id} must declare expected_samples for production validation"
+                )
+            phases.append(
+                Phase(
+                    id=f"validate-full-{candidate.label}",
+                    label=f"Validate full production run for {candidate.label}",
+                    command=(
+                        python,
+                        "-m",
+                        "tools.zhiyuan.validate_production_log",
+                        "--log-dir",
+                        str(log_dir),
+                        "--candidate-id",
+                        candidate.revision,
+                        "--expected-samples",
+                        str(expected),
+                        "--require-reviewer-subagent",
+                        "--label",
+                        candidate.label,
+                    ),
+                    environment={},
+                )
+            )
     if suite.production_policy and len(candidates) == 2:
         report_dir = run_dir / "report"
         expected = limit or suite.expected_samples
@@ -612,6 +639,15 @@ def run_manifest(run_dir: Path, *, health_checks: bool = True) -> None:
             label=str(item["label"]),
             root=Path(str(item["root"])),
             revision=str(item["revision"]),
+            source_ref=(
+                str(item["source_ref"]) if item.get("source_ref") is not None else None
+            ),
+            source_repo=(
+                Path(str(item["source_repo"]))
+                if item.get("source_repo") is not None
+                else None
+            ),
+            managed_worktree=bool(item.get("managed_worktree", False)),
         )
         for item in manifest["candidates"]
     ]

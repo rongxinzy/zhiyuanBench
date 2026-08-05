@@ -48,11 +48,14 @@ python -m zhiyuan_bench list-bridges
 python -m zhiyuan_bench run --suite agentbench-os-dev --workspace D:\rxzy\inspect_evals --candidate baseline=C:\tmp\RongxinAI-eval-candidate-1@FULL_SHA --candidate candidate=C:\tmp\RongxinAI-eval-candidate-2@FULL_SHA
 python -m zhiyuan_bench run --suite agentbench-dbbench-std --workspace D:\rxzy\inspect_evals --candidate candidate=C:\path\to\RongxinAI@FULL_SHA --limit 10 --concurrency 2
 python -m zhiyuan_bench run --suite tau2-airline --workspace D:\rxzy\inspect_evals --candidate candidate=C:\path\to\RongxinAI@FULL_SHA --limit 5
+python -m zhiyuan_bench compare --suite agentbench-os-dev --workspace D:\rxzy\inspect_evals --repo D:\rxzy\RongxinAI --branch baseline=branch-a --branch candidate=branch-b --output-root D:\eval-results\agentbench-os
 python -m zhiyuan_bench monitor .zhiyuan-bench\runs\RUN_ID --follow
 python -m zhiyuan_bench resume .zhiyuan-bench\runs\RUN_ID
 ```
 
 Use `PYTHONPATH=src` when running directly from a checkout, or install the project in editable mode.
+
+`compare` resolves each Git ref to a full commit SHA and creates a detached, isolated worktree under the output root. The manifest records the source ref, repository, resolved SHA, and worktree path. Worktrees are retained by default for diagnosis and resume; pass `--cleanup-worktrees` to remove only worktrees created by that successful command.
 
 ## Runtime configuration
 
@@ -90,6 +93,8 @@ Before any run, the framework verifies the candidate SHA and model API. Inspect 
 The output root contains one atomic `runner.lock`, preventing a second run. A lock is recovered only when its recorded process is no longer alive. Each Inspect phase records pre-existing matching container IDs before launch; cleanup considers only IDs created afterward and skips every container with mounts. AgentRL task-worker containers are controller-owned and are never deleted by this client.
 
 Inspect resume skips successful phases and repeats incomplete phases. AgentRL phases use a stable result store and pass it through `--resume`, so already completed samples are not rerun.
+
+Every production-policy candidate is validated twice: once after its single-sample preflight and again immediately after its full evaluation. Missing reviewer capability, start, or completion evidence, any reviewer failure, any bridge failure, sample errors, identity mismatch, policy bypass, or missing Inspect tool evidence fails that candidate before the comparison report can be generated.
 
 ## Coverage boundaries
 

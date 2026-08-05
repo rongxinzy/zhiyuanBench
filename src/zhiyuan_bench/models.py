@@ -40,13 +40,23 @@ class Candidate:
     label: str
     root: Path
     revision: str
+    source_ref: str | None = None
+    source_repo: Path | None = None
+    managed_worktree: bool = False
 
-    def as_dict(self) -> dict[str, str]:
-        return {
+    def as_dict(self) -> dict[str, str | bool]:
+        result: dict[str, str | bool] = {
             "label": self.label,
             "root": str(self.root),
             "revision": self.revision,
         }
+        if self.source_ref is not None:
+            result["source_ref"] = self.source_ref
+        if self.source_repo is not None:
+            result["source_repo"] = str(self.source_repo)
+        if self.managed_worktree:
+            result["managed_worktree"] = True
+        return result
 
 
 @dataclass(frozen=True)

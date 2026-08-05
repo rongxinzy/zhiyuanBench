@@ -13,11 +13,13 @@ from zhiyuan_bench.models import Candidate, Phase
 from zhiyuan_bench.registry import select_bridge, suite_by_id
 from zhiyuan_bench.runner import (
     PROGRESS_PATTERN,
+    create_run,
     build_phases,
     execute_phase,
     mark_manifest_running,
     pending_phases,
     _health_checks,
+    run_manifest,
 )
 
 
@@ -130,6 +132,7 @@ class RunnerTests(unittest.TestCase):
                     "preflight-candidate",
                     "validate-preflight-candidate",
                     "eval-candidate",
+                    "validate-full-candidate",
                 ],
             )
             preflight = phases[1]
@@ -148,6 +151,10 @@ class RunnerTests(unittest.TestCase):
             full = phases[3]
             self.assertNotIn("message_limit=1", full.command)
             self.assertNotIn("user_max_tokens=256", full.command)
+            full_validation = phases[4]
+            self.assertIn("--expected-samples", full_validation.command)
+            self.assertIn("2", full_validation.command)
+            self.assertIn("--require-reviewer-subagent", full_validation.command)
 
     def test_codeipi_phase_uses_benign_preflight_and_grader_role(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -179,6 +186,7 @@ class RunnerTests(unittest.TestCase):
                     "preflight-candidate",
                     "validate-preflight-candidate",
                     "eval-candidate",
+                    "validate-full-candidate",
                 ],
             )
             preflight = phases[1]
@@ -249,6 +257,39 @@ class RunnerTests(unittest.TestCase):
         mark_manifest_running(manifest)
 
         self.assertEqual(manifest, {"status": "running"})
+
+    def test_full_validation_failure_prevents_report(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            candidates = [
+                Candidate("candidate1", root / "candidate1", "a" * 40),
+                Candidate("candidate2", root / "candidate2", "b" * 40),
+            ]
+            for candidate in candidates:
+                candidate.root.mkdir()
+            run_dir = create_run(
+                suite_id="agentbench-os-dev",
+                bridge_id="auto",
+                candidates=candidates,
+                workspace=root,
+                output_root=root / "output",
+                limit=2,
+            )
+            executed: list[str] = []
+
+            def fake_execute(phase: Phase, **_kwargs: object) -> int:
+                executed.append(phase.id)
+                return 1 if phase.id == "validate-full-candidate2" else 0
+
+            with (
+                patch("zhiyuan_bench.runner._verify_candidate"),
+                patch("zhiyuan_bench.runner.execute_phase", side_effect=fake_execute),
+                self.assertRaisesRegex(RuntimeError, "validate-full-candidate2"),
+            ):
+                run_manifest(run_dir, health_checks=False)
+
+            self.assertIn("validate-full-candidate2", executed)
+            self.assertNotIn("report", executed)
 
 
 if __name__ == "__main__":
