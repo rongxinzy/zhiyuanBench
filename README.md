@@ -66,9 +66,12 @@ ZHIYUAN_MODEL_BASE_URL=http://host:8000/v1
 ZHIYUAN_MODEL_ID=gemma-4-31B-it
 ZHIYUAN_MODEL_TEMPERATURE=0
 ZHIYUAN_MODEL_SEED=237
+ZHIYUAN_BRIDGE_TIMEOUT_SECONDS=1800
 ```
 
 Production OS suites also require `DOCKER_HOST`. Set `ZHIYUAN_SSH_TARGET` to make a separate SSH health check mandatory. The runner automatically sets `ZHIYUAN_ENABLE_SUBAGENT=true` when the selected production bridge advertises the isolated reviewer capability.
+
+`ZHIYUAN_BRIDGE_TIMEOUT_SECONDS` controls the complete main-agent session and is independent from the model HTTP idle timeout and `ZHIYUAN_SUBAGENT_TIMEOUT_MS`. Long production workflows should size all three explicitly; a main session timeout before `request_critique` is a bridge failure and cannot satisfy a reviewer-required gate.
 
 Tau2 suites use the configured Gemma endpoint directly for the independent user simulator role while the evaluated assistant runs through the RongxinAI production policy. They do not require Docker or AgentRL, but consume substantially more tokens than single-agent suites.
 
