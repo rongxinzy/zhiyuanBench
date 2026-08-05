@@ -192,6 +192,28 @@ class RunnerTests(unittest.TestCase):
             self.assertIn("grader=openai-api/zhiyuan/gemma-test", full.command)
             self.assertNotIn("preflight_benign_only=true", full.command)
 
+    def test_agentdojo_phase_uses_benign_non_sandbox_preflight(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            suite = suite_by_id("agentdojo")
+            phases = build_phases(
+                suite,
+                select_bridge(suite),
+                [Candidate("candidate", root, "a" * 40)],
+                root,
+                root / "run",
+                limit=None,
+            )
+
+            preflight = next(
+                phase for phase in phases if phase.id == "preflight-candidate"
+            )
+            full = next(phase for phase in phases if phase.id == "eval-candidate")
+            self.assertIn("with_injections=false", preflight.command)
+            self.assertIn("with_sandbox_tasks=no", preflight.command)
+            self.assertNotIn("with_injections=false", full.command)
+            self.assertNotIn("with_sandbox_tasks=no", full.command)
+
     def test_health_check_rejects_missing_suite_python_module(self) -> None:
         suite = suite_by_id("swe-bench-verified-mini")
         with (

@@ -99,11 +99,42 @@ SUITES = (
         task="tools/zhiyuan/baseline.py@zhiyuan_ipi_coding_agent",
         production_policy=True,
         preflight=True,
+        preflight_task_args=("preflight_benign_only=true",),
         max_candidates=2,
         model_roles=("grader",),
         notes=(
             "Uses a direct Gemma grader role for detection and false-positive scoring.",
             "The preflight selects one benign sample; the full run preserves all 45 samples.",
+        ),
+    ),
+    SuiteDefinition(
+        id="agentdojo",
+        description="AgentDojo utility and prompt-injection robustness (1014 samples)",
+        adapter="inspect-production",
+        required_capabilities=frozenset(
+            {
+                "inspect",
+                "inspect_tools",
+                "model_api",
+                "multi_turn",
+                "production_policy",
+                "progress_events",
+                "run_limits",
+                "sandbox",
+                "subagent",
+            }
+        ),
+        expected_samples=1014,
+        task="tools/zhiyuan/baseline.py@zhiyuan_agentdojo",
+        production_policy=True,
+        preflight=True,
+        preflight_task_args=("with_injections=false", "with_sandbox_tasks=no"),
+        max_candidates=2,
+        required_python_modules=("deepdiff", "email_validator"),
+        notes=(
+            "Preserves all five official task suites and formal state-based scorers.",
+            "The preflight uses one benign non-sandbox sample; the full run preserves all 1014 samples.",
+            "Seventy full-run samples require Docker sandboxes.",
         ),
     ),
     SuiteDefinition(

@@ -295,8 +295,8 @@ def _inspect_command(
     ]
     if preflight:
         command.extend(("--limit", "1", "-T", "require_inspect_tool_call=true"))
-        if suite.id == "codeipi":
-            command.extend(("-T", "preflight_benign_only=true"))
+        for task_arg in suite.preflight_task_args:
+            command.extend(("-T", task_arg))
     elif limit is not None:
         command.extend(("--limit", str(limit)))
     if suite.adapter == "inspect-bfcl":

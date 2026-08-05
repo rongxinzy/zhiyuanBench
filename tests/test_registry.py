@@ -45,6 +45,17 @@ class RegistryTests(unittest.TestCase):
         self.assertEqual(suite.required_host_platforms, ("linux", "darwin"))
         self.assertEqual(suite.required_python_modules, ("swebench", "jsonlines"))
 
+    def test_auto_selects_production_bridge_for_agentdojo(self) -> None:
+        suite = suite_by_id("agentdojo")
+
+        self.assertEqual(select_bridge(suite).id, "headless-pi-production")
+        self.assertEqual(suite.expected_samples, 1014)
+        self.assertEqual(
+            suite.preflight_task_args,
+            ("with_injections=false", "with_sandbox_tasks=no"),
+        )
+        self.assertEqual(suite.required_python_modules, ("deepdiff", "email_validator"))
+
     def test_auto_selects_agentrl_bridge_for_non_os_suites(self) -> None:
         for suite_id in (
             "agentbench-alfworld-std",

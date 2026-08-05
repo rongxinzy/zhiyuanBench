@@ -24,6 +24,7 @@ class SuiteDefinition:
     task: str
     production_policy: bool = False
     preflight: bool = False
+    preflight_task_args: tuple[str, ...] = ()
     min_candidates: int = 1
     max_candidates: int | None = None
     required_environment: tuple[str, ...] = ()
