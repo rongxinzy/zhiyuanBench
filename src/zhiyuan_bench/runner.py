@@ -131,8 +131,12 @@ def build_phases(
     run_dir: Path,
     limit: int | None,
     concurrency: int = 1,
+    reviewer_required_candidates: set[str] | None = None,
 ) -> list[Phase]:
     phases: list[Phase] = []
+    reviewer_required = reviewer_required_candidates or {
+        candidate.label for candidate in candidates
+    }
     python = _python(workspace)
     if suite.adapter == "agentrl-agentbench-fc":
         for candidate in candidates:
@@ -222,7 +226,11 @@ def build_phases(
                         candidate.revision,
                         "--expected-samples",
                         "1",
-                        "--require-reviewer-subagent",
+                        *(
+                            ("--require-reviewer-subagent",)
+                            if candidate.label in reviewer_required
+                            else ()
+                        ),
                     ),
                     environment={},
                 )
@@ -258,7 +266,11 @@ def build_phases(
                         candidate.revision,
                         "--expected-samples",
                         str(expected),
-                        "--require-reviewer-subagent",
+                        *(
+                            ("--require-reviewer-subagent",)
+                            if candidate.label in reviewer_required
+                            else ()
+                        ),
                         "--label",
                         candidate.label,
                     ),
@@ -280,8 +292,11 @@ def build_phases(
             "--expected-samples",
             str(expected),
             "--require-production-agent",
-            "--require-reviewer-subagent",
         )
+        if candidates[0].label in reviewer_required:
+            command += ("--require-baseline-reviewer-subagent",)
+        if candidates[1].label in reviewer_required:
+            command += ("--require-candidate-reviewer-subagent",)
         phases.append(
             Phase(
                 id="report",
@@ -579,6 +594,7 @@ def create_run(
     output_root: Path,
     limit: int | None = None,
     concurrency: int = 1,
+    reviewer_required_candidates: set[str] | None = None,
 ) -> Path:
     suite = suite_by_id(suite_id)
     bridge = select_bridge(suite, bridge_id)
@@ -590,6 +606,14 @@ def create_run(
         raise ValueError(
             f"Suite {suite.id} accepts {suite.min_candidates}.."
             f"{suite.max_candidates or 'many'} candidates"
+        )
+    candidate_labels = {candidate.label for candidate in candidates}
+    reviewer_required = reviewer_required_candidates or candidate_labels
+    unknown_reviewer_labels = reviewer_required - candidate_labels
+    if unknown_reviewer_labels:
+        raise ValueError(
+            "Reviewer-required candidates are not configured: "
+            + ", ".join(sorted(unknown_reviewer_labels))
         )
     run_id = _run_id()
     run_dir = output_root.resolve() / "runs" / run_id
@@ -604,6 +628,7 @@ def create_run(
         "limit": limit,
         "concurrency": concurrency,
         "candidates": [candidate.as_dict() for candidate in candidates],
+        "reviewer_required_candidates": sorted(reviewer_required),
         "created_at": datetime.now(UTC).isoformat(),
         "phases": {},
     }
@@ -659,6 +684,13 @@ def run_manifest(run_dir: Path, *, health_checks: bool = True) -> None:
         run_dir,
         manifest.get("limit"),
         int(manifest.get("concurrency", 1)),
+        set(
+            str(label)
+            for label in manifest.get(
+                "reviewer_required_candidates",
+                [candidate.label for candidate in candidates],
+            )
+        ),
     )
     sink = EventSink(run_dir / "events.jsonl", run_id, stream=sys.stdout)
     tracker = None

@@ -27,6 +27,12 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--output-root", type=Path, default=Path(".zhiyuan-bench"))
     run.add_argument("--limit", type=int)
     run.add_argument("--concurrency", type=int, default=1)
+    run.add_argument(
+        "--reviewer-required",
+        action="append",
+        metavar="LABEL",
+        help="Require reviewer lifecycle evidence for this candidate (repeatable)",
+    )
     run.add_argument("--no-health-checks", action="store_true", help=argparse.SUPPRESS)
 
     compare = commands.add_parser(
@@ -40,6 +46,12 @@ def _parser() -> argparse.ArgumentParser:
     compare.add_argument("--output-root", type=Path, default=Path(".zhiyuan-bench"))
     compare.add_argument("--limit", type=int)
     compare.add_argument("--concurrency", type=int, default=1)
+    compare.add_argument(
+        "--reviewer-required",
+        action="append",
+        metavar="LABEL",
+        help="Require reviewer lifecycle evidence for this candidate (repeatable)",
+    )
     compare.add_argument(
         "--cleanup-worktrees",
         action="store_true",
@@ -106,6 +118,9 @@ def main(argv: list[str] | None = None) -> int:
                 output_root=args.output_root,
                 limit=args.limit,
                 concurrency=args.concurrency,
+                reviewer_required_candidates=(
+                    set(args.reviewer_required) if args.reviewer_required else None
+                ),
             )
             print(f"Run directory: {run_dir}", flush=True)
             run_manifest(run_dir, health_checks=not args.no_health_checks)

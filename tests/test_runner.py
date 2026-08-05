@@ -222,6 +222,47 @@ class RunnerTests(unittest.TestCase):
             self.assertNotIn("with_injections=false", full.command)
             self.assertNotIn("with_sandbox_tasks=no", full.command)
 
+    def test_reviewer_validation_can_target_only_candidate2(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            candidates = [
+                Candidate("candidate1", root, "a" * 40),
+                Candidate("candidate2", root, "b" * 40),
+            ]
+            suite = suite_by_id("agentbench-os-dev")
+            phases = build_phases(
+                suite,
+                select_bridge(suite),
+                candidates,
+                root,
+                root / "run",
+                limit=2,
+                reviewer_required_candidates={"candidate2"},
+            )
+
+            baseline_preflight = next(
+                phase for phase in phases if phase.id == "validate-preflight-candidate1"
+            )
+            candidate_preflight = next(
+                phase for phase in phases if phase.id == "validate-preflight-candidate2"
+            )
+            baseline_full = next(
+                phase for phase in phases if phase.id == "validate-full-candidate1"
+            )
+            candidate_full = next(
+                phase for phase in phases if phase.id == "validate-full-candidate2"
+            )
+            report = next(phase for phase in phases if phase.id == "report")
+
+            self.assertNotIn("--require-reviewer-subagent", baseline_preflight.command)
+            self.assertNotIn("--require-reviewer-subagent", baseline_full.command)
+            self.assertIn("--require-reviewer-subagent", candidate_preflight.command)
+            self.assertIn("--require-reviewer-subagent", candidate_full.command)
+            self.assertNotIn(
+                "--require-baseline-reviewer-subagent", report.command
+            )
+            self.assertIn("--require-candidate-reviewer-subagent", report.command)
+
     def test_health_check_rejects_missing_suite_python_module(self) -> None:
         suite = suite_by_id("swe-bench-verified-mini")
         with (

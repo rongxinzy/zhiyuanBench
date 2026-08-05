@@ -48,7 +48,7 @@ python -m zhiyuan_bench list-bridges
 python -m zhiyuan_bench run --suite agentbench-os-dev --workspace D:\rxzy\inspect_evals --candidate baseline=C:\tmp\RongxinAI-eval-candidate-1@FULL_SHA --candidate candidate=C:\tmp\RongxinAI-eval-candidate-2@FULL_SHA
 python -m zhiyuan_bench run --suite agentbench-dbbench-std --workspace D:\rxzy\inspect_evals --candidate candidate=C:\path\to\RongxinAI@FULL_SHA --limit 10 --concurrency 2
 python -m zhiyuan_bench run --suite tau2-airline --workspace D:\rxzy\inspect_evals --candidate candidate=C:\path\to\RongxinAI@FULL_SHA --limit 5
-python -m zhiyuan_bench compare --suite agentbench-os-dev --workspace D:\rxzy\inspect_evals --repo D:\rxzy\RongxinAI --branch baseline=branch-a --branch candidate=branch-b --output-root D:\eval-results\agentbench-os
+python -m zhiyuan_bench compare --suite agentbench-os-dev --workspace D:\rxzy\inspect_evals --repo D:\rxzy\RongxinAI --branch baseline=branch-a --branch candidate=branch-b --reviewer-required candidate --output-root D:\eval-results\agentbench-os
 python -m zhiyuan_bench monitor .zhiyuan-bench\runs\RUN_ID --follow
 python -m zhiyuan_bench resume .zhiyuan-bench\runs\RUN_ID
 ```
@@ -95,6 +95,8 @@ The output root contains one atomic `runner.lock`, preventing a second run. A lo
 Inspect resume skips successful phases and repeats incomplete phases. AgentRL phases use a stable result store and pass it through `--resume`, so already completed samples are not rerun.
 
 Every production-policy candidate is validated twice: once after its single-sample preflight and again immediately after its full evaluation. Missing reviewer capability, start, or completion evidence, any reviewer failure, any bridge failure, sample errors, identity mismatch, policy bypass, or missing Inspect tool evidence fails that candidate before the comparison report can be generated.
+
+Reviewer lifecycle validation applies to every candidate by default. For an A/B test where the baseline intentionally predates reviewer support, repeat `--reviewer-required LABEL` for only the candidates expected to exercise the reviewer. The reviewer bridge capability remains active for every production candidate; this option changes only which candidate results require observed start and completion evidence.
 
 ## Coverage boundaries
 
