@@ -68,6 +68,7 @@ ZHIYUAN_MODEL_TEMPERATURE=0
 ZHIYUAN_MODEL_SEED=237
 ZHIYUAN_BRIDGE_TIMEOUT_SECONDS=1800
 ZHIYUAN_INSPECT_TIME_LIMIT_SECONDS=1860
+ZHIYUAN_INSPECT_MODEL_TIMEOUT_SECONDS=300
 ```
 
 Production OS suites also require `DOCKER_HOST`. Set `ZHIYUAN_SSH_TARGET` to make a separate SSH health check mandatory. The runner automatically sets `ZHIYUAN_ENABLE_SUBAGENT=true` when the selected production bridge advertises the isolated reviewer capability.
@@ -75,6 +76,8 @@ Production OS suites also require `DOCKER_HOST`. Set `ZHIYUAN_SSH_TARGET` to mak
 `ZHIYUAN_BRIDGE_TIMEOUT_SECONDS` controls the complete main-agent session and is independent from the model HTTP idle timeout and `ZHIYUAN_SUBAGENT_TIMEOUT_MS`. Long production workflows should size all three explicitly; a main session timeout before `request_critique` is a bridge failure and cannot satisfy a reviewer-required gate.
 
 `ZHIYUAN_INSPECT_TIME_LIMIT_SECONDS` controls Inspect's outer per-sample limit. It defaults to the bridge session timeout plus 60 seconds and must remain greater than the bridge timeout, ensuring the bridge can persist a terminal success or failure before Inspect closes the sample.
+
+Suites with direct Inspect model roles also set a finite request and attempt deadline plus zero automatic retries. `ZHIYUAN_INSPECT_MODEL_TIMEOUT_SECONDS` defaults to `ZHIYUAN_HTTP_IDLE_TIMEOUT_MS` converted to seconds, preventing grader or user-simulator requests from retrying forever after the production bridge has completed.
 
 Tau2 suites use the configured Gemma endpoint directly for the independent user simulator role while the evaluated assistant runs through the RongxinAI production policy. They do not require Docker or AgentRL, but consume substantially more tokens than single-agent suites.
 

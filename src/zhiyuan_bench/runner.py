@@ -359,6 +359,23 @@ def _inspect_command(
     if suite.adapter == "inspect-bfcl":
         command.extend(("-T", "categories=all_single_turn"))
     if suite.model_roles:
+        http_idle_timeout_ms = _positive_int_environment(
+            "ZHIYUAN_HTTP_IDLE_TIMEOUT_MS", default=300_000
+        )
+        model_timeout = _positive_int_environment(
+            "ZHIYUAN_INSPECT_MODEL_TIMEOUT_SECONDS",
+            default=max(1, (http_idle_timeout_ms + 999) // 1000),
+        )
+        command.extend(
+            (
+                "--timeout",
+                str(model_timeout),
+                "--attempt-timeout",
+                str(model_timeout),
+                "--max-retries",
+                "0",
+            )
+        )
         model_id = os.environ.get("ZHIYUAN_MODEL_ID", "missing-model")
         for role in suite.model_roles:
             command.extend(("--model-role", f"{role}=openai-api/zhiyuan/{model_id}"))

@@ -192,6 +192,11 @@ class RunnerTests(unittest.TestCase):
             preflight = phases[1]
             self.assertIn("grader=openai-api/zhiyuan/gemma-test", preflight.command)
             self.assertIn("preflight_benign_only=true", preflight.command)
+            self.assertIn("--timeout", preflight.command)
+            self.assertIn("300", preflight.command)
+            self.assertIn("--attempt-timeout", preflight.command)
+            self.assertIn("--max-retries", preflight.command)
+            self.assertIn("0", preflight.command)
             self.assertEqual(
                 preflight.environment["ZHIYUAN_BASE_URL"],
                 "http://model.test/v1",
@@ -199,6 +204,30 @@ class RunnerTests(unittest.TestCase):
             full = phases[3]
             self.assertIn("grader=openai-api/zhiyuan/gemma-test", full.command)
             self.assertNotIn("preflight_benign_only=true", full.command)
+
+    def test_model_role_timeout_can_be_configured(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            suite = suite_by_id("codeipi")
+            with patch.dict(
+                os.environ,
+                {"ZHIYUAN_INSPECT_MODEL_TIMEOUT_SECONDS": "420"},
+                clear=False,
+            ):
+                phases = build_phases(
+                    suite,
+                    select_bridge(suite),
+                    [Candidate("candidate", root, "a" * 40)],
+                    root,
+                    root / "run",
+                    limit=1,
+                )
+
+            full = next(phase for phase in phases if phase.id == "eval-candidate")
+            timeout_index = full.command.index("--timeout")
+            attempt_index = full.command.index("--attempt-timeout")
+            self.assertEqual(full.command[timeout_index + 1], "420")
+            self.assertEqual(full.command[attempt_index + 1], "420")
 
     def test_production_inspect_time_limit_exceeds_bridge_timeout(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
