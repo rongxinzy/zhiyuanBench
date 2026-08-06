@@ -83,6 +83,8 @@ Suites with direct Inspect model roles also set a finite request and attempt dea
 
 Tau2 suites use the configured Gemma endpoint directly for the independent user simulator role while the evaluated assistant runs through the RongxinAI production policy. They do not require Docker or AgentRL, but consume substantially more tokens than single-agent suites.
 
+When the model endpoint is a loopback URL, the runner automatically adds its host to `NO_PROXY` and `no_proxy` for Inspect model-role subprocesses. This prevents Python HTTP clients from sending an SSH-tunneled localhost request through a Windows system proxy.
+
 AgentRL suites additionally require:
 
 ```text
@@ -103,7 +105,7 @@ Before any run, the framework verifies the candidate SHA and model API. Inspect 
 
 The output root contains one atomic `runner.lock`, preventing a second run. A lock is recovered only when its recorded process is no longer alive. Each Inspect phase records pre-existing matching container IDs before launch; cleanup considers only IDs created afterward and skips every container with mounts. AgentRL task-worker containers are controller-owned and are never deleted by this client.
 
-Inspect resume skips successful phases and repeats incomplete phases. AgentRL phases use a stable result store and pass it through `--resume`, so already completed samples are not rerun.
+Inspect resume skips successful phases and repeats incomplete phases. If a production validator fails, resume also repeats the corresponding preflight or full evaluation because Inspect can return process status 0 for an interrupted log. AgentRL phases use a stable result store and pass it through `--resume`, so already completed samples are not rerun.
 
 Every production-policy candidate is validated twice: once after its single-sample preflight and again immediately after its full evaluation. Missing reviewer capability, start, or completion evidence, any reviewer failure, any bridge failure, sample errors, identity mismatch, policy bypass, or missing Inspect tool evidence fails that candidate before the comparison report can be generated.
 

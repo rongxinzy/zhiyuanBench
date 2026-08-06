@@ -25,8 +25,10 @@ class RegistryTests(unittest.TestCase):
             "tau2-telecom",
         ):
             with self.subTest(suite=suite_id):
-                bridge = select_bridge(suite_by_id(suite_id))
+                suite = suite_by_id(suite_id)
+                bridge = select_bridge(suite)
                 self.assertEqual(bridge.id, "headless-pi-production")
+                self.assertFalse(suite.preflight_require_inspect_tool_call)
                 self.assertIn("user_simulator", bridge.capabilities)
 
     def test_auto_selects_production_bridge_for_codeipi(self) -> None:

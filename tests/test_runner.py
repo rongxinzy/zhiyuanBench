@@ -19,6 +19,7 @@ from zhiyuan_bench.runner import (
     create_run,
     build_phases,
     execute_phase,
+    invalidate_failed_validation_sources,
     mark_manifest_running,
     pending_phases,
     _health_checks,
@@ -131,7 +132,10 @@ class RunnerTests(unittest.TestCase):
             )
             self.assertIn("--limit", phases[0].command)
             self.assertIn("--concurrency", phases[0].command)
-            self.assertIn("zhiyuanBench\\src", phases[0].environment["PYTHONPATH"])
+            self.assertIn(
+                str(Path(__file__).resolve().parents[1] / "src"),
+                phases[0].environment["PYTHONPATH"],
+            )
 
     def test_tau2_phase_configures_direct_user_model_role(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -168,6 +172,7 @@ class RunnerTests(unittest.TestCase):
             )
             preflight = phases[1]
             self.assertIn("user=openai-api/zhiyuan/gemma-test", preflight.command)
+            self.assertIn("require_inspect_tool_call=false", preflight.command)
             self.assertIn("message_limit=1", preflight.command)
             self.assertIn("user_max_tokens=256", preflight.command)
             self.assertIn("user_timeout_seconds=180", preflight.command)
@@ -178,6 +183,7 @@ class RunnerTests(unittest.TestCase):
             self.assertEqual(preflight.environment["ZHIYUAN_API_KEY"], "local-eval")
             validation = phases[2]
             self.assertIn("tools.zhiyuan.validate_production_log", validation.command)
+            self.assertIn("--allow-no-inspect-tool-call", validation.command)
             self.assertIn(candidate.revision, validation.command)
             full = phases[3]
             self.assertNotIn("message_limit=1", full.command)
@@ -186,6 +192,38 @@ class RunnerTests(unittest.TestCase):
             self.assertIn("--expected-samples", full_validation.command)
             self.assertIn("2", full_validation.command)
             self.assertIn("--require-reviewer-subagent", full_validation.command)
+
+    def test_loopback_model_role_bypasses_system_proxy(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            suite = suite_by_id("tau2-airline")
+            with patch.dict(
+                os.environ,
+                {
+                    "ZHIYUAN_MODEL_BASE_URL": "http://127.0.0.1:18010/v1",
+                    "ZHIYUAN_MODEL_ID": "gemma-test",
+                    "NO_PROXY": "internal.test",
+                },
+                clear=False,
+            ):
+                phases = build_phases(
+                    suite,
+                    select_bridge(suite),
+                    [Candidate("candidate", root, "a" * 40)],
+                    root,
+                    root / "run",
+                    limit=1,
+                )
+
+            preflight = next(
+                phase for phase in phases if phase.id == "preflight-candidate"
+            )
+            self.assertEqual(
+                preflight.environment["NO_PROXY"], "internal.test,127.0.0.1"
+            )
+            self.assertEqual(
+                preflight.environment["no_proxy"], "internal.test,127.0.0.1"
+            )
 
     def test_codeipi_phase_uses_benign_preflight_and_grader_role(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -440,6 +478,23 @@ class RunnerTests(unittest.TestCase):
         mark_manifest_running(manifest)
 
         self.assertEqual(manifest, {"status": "running"})
+
+    def test_failed_validation_invalidates_its_source_phase(self) -> None:
+        manifest = {
+            "phases": {
+                "preflight-candidate": {"status": "succeeded"},
+                "validate-preflight-candidate": {"status": "failed"},
+                "eval-candidate": {"status": "succeeded"},
+                "validate-full-candidate": {"status": "failed"},
+            }
+        }
+
+        self.assertTrue(invalidate_failed_validation_sources(manifest))
+        self.assertEqual(
+            manifest["phases"]["preflight-candidate"]["status"], "failed"
+        )
+        self.assertEqual(manifest["phases"]["eval-candidate"]["status"], "failed")
+        self.assertFalse(invalidate_failed_validation_sources(manifest))
 
     def test_full_validation_failure_prevents_report(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

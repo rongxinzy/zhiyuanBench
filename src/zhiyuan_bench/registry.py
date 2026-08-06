@@ -200,6 +200,7 @@ SUITES = (
             task=f"tools/zhiyuan/baseline.py@zhiyuan_tau2_{domain}",
             production_policy=True,
             preflight=True,
+            preflight_require_inspect_tool_call=False,
             max_candidates=2,
             model_roles=("user",),
             notes=(

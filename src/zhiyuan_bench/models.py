@@ -24,6 +24,7 @@ class SuiteDefinition:
     task: str
     production_policy: bool = False
     preflight: bool = False
+    preflight_require_inspect_tool_call: bool = True
     preflight_task_args: tuple[str, ...] = ()
     min_candidates: int = 1
     max_candidates: int | None = None

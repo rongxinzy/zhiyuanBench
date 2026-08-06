@@ -53,6 +53,25 @@ PROGRESS_PATTERN = re.compile(
 )
 
 
+def _append_no_proxy_host(value: str, host: str) -> str:
+    entries = [entry.strip() for entry in value.split(",") if entry.strip()]
+    if host.lower() not in {entry.lower() for entry in entries}:
+        entries.append(host)
+    return ",".join(entries)
+
+
+def _loopback_model_proxy_environment(base_url: str) -> dict[str, str]:
+    host = urllib.parse.urlsplit(base_url).hostname
+    if host is None or not (
+        host.lower() == "localhost" or host == "::1" or host.startswith("127.")
+    ):
+        return {}
+    return {
+        name: _append_no_proxy_host(os.environ.get(name, ""), host)
+        for name in ("NO_PROXY", "no_proxy")
+    }
+
+
 def parse_candidate(value: str) -> Candidate:
     try:
         label, checkout = value.split("=", 1)
@@ -121,6 +140,7 @@ def _candidate_environment(
             base_url = environment.get("ZHIYUAN_MODEL_BASE_URL")
             if base_url:
                 environment["ZHIYUAN_BASE_URL"] = base_url
+                environment.update(_loopback_model_proxy_environment(base_url))
             environment["ZHIYUAN_API_KEY"] = (
                 environment.get("ZHIYUAN_MODEL_API_KEY") or "local-eval"
             )
@@ -238,6 +258,11 @@ def build_phases(
                         candidate.revision,
                         "--expected-samples",
                         "1",
+                        *(
+                            ("--allow-no-inspect-tool-call",)
+                            if not suite.preflight_require_inspect_tool_call
+                            else ()
+                        ),
                         *(
                             ("--require-reviewer-subagent",)
                             if candidate.label in reviewer_required
@@ -370,7 +395,15 @@ def _inspect_command(
             )
         command.extend(("--time-limit", str(inspect_time_limit)))
     if preflight:
-        command.extend(("--limit", "1", "-T", "require_inspect_tool_call=true"))
+        command.extend(
+            (
+                "--limit",
+                "1",
+                "-T",
+                "require_inspect_tool_call="
+                + str(suite.preflight_require_inspect_tool_call).lower(),
+            )
+        )
         for task_arg in suite.preflight_task_args:
             command.extend(("-T", task_arg))
     elif limit is not None:
@@ -767,6 +800,32 @@ def mark_manifest_running(manifest: dict[str, Any]) -> None:
     manifest.pop("completed_at", None)
 
 
+def invalidate_failed_validation_sources(manifest: dict[str, Any]) -> bool:
+    states = manifest.get("phases")
+    if not isinstance(states, dict):
+        return False
+    changed = False
+    for validation_prefix, source_prefix in (
+        ("validate-preflight-", "preflight-"),
+        ("validate-full-", "eval-"),
+    ):
+        for phase_id, state in list(states.items()):
+            if not phase_id.startswith(validation_prefix) or not isinstance(
+                state, dict
+            ):
+                continue
+            if state.get("status") != "failed":
+                continue
+            source_id = source_prefix + phase_id.removeprefix(validation_prefix)
+            source_state = states.get(source_id)
+            if isinstance(source_state, dict) and source_state.get(
+                "status"
+            ) == "succeeded":
+                source_state["status"] = "failed"
+                changed = True
+    return changed
+
+
 def run_manifest(run_dir: Path, *, health_checks: bool = True) -> None:
     manifest = read_manifest(run_dir)
     run_id = str(manifest["run_id"])
@@ -815,6 +874,7 @@ def run_manifest(run_dir: Path, *, health_checks: bool = True) -> None:
     with RunLock(output_root / "runner.lock", run_id):
         try:
             mark_manifest_running(manifest)
+            invalidate_failed_validation_sources(manifest)
             write_manifest(run_dir, manifest)
             sink.emit(
                 "run_started",
@@ -868,6 +928,7 @@ def run_manifest(run_dir: Path, *, health_checks: bool = True) -> None:
                             },
                         )
                 phase_state["status"] = "succeeded" if return_code == 0 else "failed"
+                invalidate_failed_validation_sources(manifest)
                 write_manifest(run_dir, manifest)
                 if return_code != 0:
                     raise RuntimeError(
