@@ -96,6 +96,15 @@ def _parser() -> argparse.ArgumentParser:
         "--no-health-checks", action="store_true", help=argparse.SUPPRESS
     )
     campaign_commands.add_parser("list-suites")
+
+    ui = commands.add_parser("ui", help="Run the local campaign Web application")
+    ui.add_argument("--repo", type=Path, required=True)
+    ui.add_argument("--workspace", type=Path, required=True)
+    ui.add_argument(
+        "--records-root", type=Path, default=Path(".zhiyuan-bench/records")
+    )
+    ui.add_argument("--host", default="127.0.0.1")
+    ui.add_argument("--port", type=int, default=8765)
     return parser
 
 
@@ -140,6 +149,21 @@ def main(argv: list[str] | None = None) -> int:
                     run_campaign(campaign_dir)
                 return 0
             run_campaign(args.campaign_dir, health_checks=not args.no_health_checks)
+            return 0
+        if args.command == "ui":
+            if args.port <= 0 or args.port > 65535:
+                raise ValueError("--port must be between 1 and 65535")
+            from zhiyuan_bench.web import WebConfig, run_web_server
+
+            run_web_server(
+                WebConfig(
+                    repo=args.repo,
+                    workspace=args.workspace,
+                    records_root=args.records_root,
+                ),
+                host=args.host,
+                port=args.port,
+            )
             return 0
         if args.command in {"run", "compare"}:
             if args.limit is not None and args.limit <= 0:

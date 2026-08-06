@@ -109,6 +109,26 @@ def resolve_branch_revisions(
     ]
 
 
+def list_local_branches(repo: Path) -> list[dict[str, str]]:
+    """List local branch names and immutable revisions for UI selection."""
+    repo = repo.expanduser().resolve()
+    if not repo.is_dir():
+        raise ValueError(f"Candidate repository does not exist: {repo}")
+    result = _git(
+        repo,
+        "for-each-ref",
+        "--sort=refname",
+        "--format=%(refname:short)%09%(objectname)",
+        "refs/heads",
+    )
+    branches: list[dict[str, str]] = []
+    for line in result.stdout.splitlines():
+        name, separator, revision = line.partition("\t")
+        if separator and re.fullmatch(r"[0-9a-fA-F]{40}", revision):
+            branches.append({"name": name, "revision": revision.lower()})
+    return branches
+
+
 def create_resolved_candidates(
     repo: Path,
     resolved: list[tuple[str, str, str]],

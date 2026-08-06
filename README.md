@@ -54,6 +54,7 @@ python -m zhiyuan_bench resume .zhiyuan-bench\runs\RUN_ID
 python -m zhiyuan_bench campaign list-suites
 python -m zhiyuan_bench campaign create --suite agentbench-os-dev --suite codeipi --repo D:\rxzy\RongxinAI --branch baseline=main --branch candidate=feature/agent --workspace D:\rxzy\inspect_evals --records-root D:\eval-records --run
 python -m zhiyuan_bench campaign run D:\eval-records\CAMPAIGN_ID
+python -m zhiyuan_bench ui --repo D:\rxzy\RongxinAI --workspace D:\rxzy\inspect_evals --records-root D:\eval-records
 ```
 
 Use `PYTHONPATH=src` when running directly from a checkout, or install the project in editable mode.
@@ -84,6 +85,14 @@ records/
 ```
 
 `campaign.json` is the authoritative resumable state, `events.jsonl` is append-only prompt-free history, and `live-summary.json` is an atomic compact view for dashboards. Suite run directories retain the existing raw logs, Inspect artifacts, validation output, and comparison reports. Benchmark prompts, targets, answers, and sample IDs are never copied into campaign progress files.
+
+The local Web application is an optional install so the base runner remains dependency-free:
+
+```text
+python -m pip install "zhiyuan-bench[web]"
+```
+
+`zhiyuan-bench ui` binds to `127.0.0.1:8765` by default. Its API lists the eight campaign suites and local Git branches, creates and resumes campaign records, and streams prompt-free progress through SSE. Web-triggered evaluation runs execute in a separate Python process and retain launcher stdout/stderr under the campaign record. The API refuses a second live runner and never terminates an existing process.
 
 ## Runtime configuration
 

@@ -13,5 +13,11 @@ license = { text = "MIT" }
 [project.scripts]
 zhiyuan-bench = "zhiyuan_bench.cli:main"
 
+[project.optional-dependencies]
+web = [
+    "starlette>=0.40,<2",
+    "uvicorn>=0.30,<1",
+]
+
 [tool.setuptools.packages.find]
 where = ["src"]
