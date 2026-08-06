@@ -15,6 +15,7 @@ from zhiyuan_bench.events import EventSink
 from zhiyuan_bench.locking import RunLock
 from zhiyuan_bench.models import Candidate
 from zhiyuan_bench.registry import select_bridge, suite_by_id
+from zhiyuan_bench.reports import write_campaign_report
 from zhiyuan_bench.runner import SuiteUnavailableError, create_run, run_manifest
 from zhiyuan_bench.worktrees import (
     cleanup_worktrees,
@@ -59,7 +60,9 @@ def read_campaign(campaign_dir: Path) -> dict[str, Any]:
 
 def write_campaign(campaign_dir: Path, manifest: dict[str, Any]) -> None:
     _atomic_json(campaign_dir / "campaign.json", manifest)
-    _atomic_json(campaign_dir / "live-summary.json", campaign_summary(manifest))
+    summary = campaign_summary(manifest)
+    _atomic_json(campaign_dir / "live-summary.json", summary)
+    write_campaign_report(campaign_dir, summary)
 
 
 def _slug(value: str, *, limit: int = 28) -> str:
@@ -104,6 +107,9 @@ def campaign_summary(manifest: dict[str, Any]) -> dict[str, Any]:
                 "progress",
                 "run_dir",
                 "failure",
+                "attempts",
+                "started_at",
+                "completed_at",
             )
             if suite.get(key) is not None
         }
@@ -162,7 +168,11 @@ def create_campaign(
 
     resolved = resolve_branch_revisions(repo, branch_values)
     labels = {label for label, _source_ref, _revision in resolved}
-    reviewer_required = reviewer_required_candidates or labels
+    reviewer_required = (
+        labels
+        if reviewer_required_candidates is None
+        else reviewer_required_candidates
+    )
     unknown = reviewer_required - labels
     if unknown:
         raise ValueError(

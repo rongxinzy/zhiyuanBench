@@ -71,6 +71,9 @@ records/
     campaign.json
     events.jsonl
     live-summary.json
+    report/
+      report.html
+      summary.json
     worktrees/
       baseline/
       candidate/
@@ -84,7 +87,7 @@ records/
             report/
 ```
 
-`campaign.json` is the authoritative resumable state, `events.jsonl` is append-only prompt-free history, and `live-summary.json` is an atomic compact view for dashboards. Suite run directories retain the existing raw logs, Inspect artifacts, validation output, and comparison reports. Benchmark prompts, targets, answers, and sample IDs are never copied into campaign progress files.
+`campaign.json` is the authoritative resumable state, `events.jsonl` is append-only prompt-free history, and `live-summary.json` is an atomic compact view for dashboards. `report/report.html` is a standalone, responsive summary that can be archived or opened without the Web application; `report/summary.json` retains the same prompt-free data for later analysis. Suite run directories retain the existing raw logs, Inspect artifacts, validation output, and comparison reports. Benchmark prompts, targets, answers, and sample IDs are never copied into campaign progress files.
 
 The local Web application is an optional install so the base runner remains dependency-free:
 
@@ -92,7 +95,9 @@ The local Web application is an optional install so the base runner remains depe
 python -m pip install "zhiyuan-bench[web]"
 ```
 
-`zhiyuan-bench ui` binds to `127.0.0.1:8765` by default. Its API lists the eight campaign suites and local Git branches, creates and resumes campaign records, and streams prompt-free progress through SSE. Web-triggered evaluation runs execute in a separate Python process and retain launcher stdout/stderr under the campaign record. The API refuses a second live runner and never terminates an existing process.
+`zhiyuan-bench ui` binds to `127.0.0.1:8765` by default. The responsive Chinese/English interface lists the eight campaign suites and local Git branches, creates and resumes campaign records, and streams prompt-free progress through SSE. It supports light and dark themes and links each record to its standalone report. Web-triggered evaluation runs execute in a separate Python process and retain launcher stdout/stderr under the campaign record. The API refuses a second live runner and never terminates an existing process.
+
+The interface uses vendored Pico CSS 2.1.1 for accessible form and table primitives, a small Zhiyuan semantic-token adapter, and inline Lucide icon paths. It has no frontend build step, CDN request, JavaScript framework, or runtime Node dependency.
 
 ## Runtime configuration
 

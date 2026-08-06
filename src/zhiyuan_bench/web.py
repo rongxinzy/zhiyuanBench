@@ -15,8 +15,9 @@ from typing import Any
 from starlette.applications import Starlette
 from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
-from starlette.responses import JSONResponse, Response, StreamingResponse
-from starlette.routing import Route
+from starlette.responses import FileResponse, JSONResponse, Response, StreamingResponse
+from starlette.routing import Mount, Route
+from starlette.staticfiles import StaticFiles
 
 from zhiyuan_bench.campaigns import (
     CAMPAIGN_SUITES,
@@ -27,6 +28,8 @@ from zhiyuan_bench.campaigns import (
 from zhiyuan_bench.locking import RunLock
 from zhiyuan_bench.registry import select_bridge, suite_by_id
 from zhiyuan_bench.worktrees import list_local_branches
+
+STATIC_ROOT = Path(__file__).with_name("static")
 
 
 @dataclass(frozen=True)
@@ -235,7 +238,9 @@ def _parse_create_payload(value: Any) -> dict[str, Any]:
         "branch_values": branch_values,
         "limit": limit,
         "concurrency": concurrency,
-        "reviewer_required_candidates": set(reviewer) if reviewer else None,
+        "reviewer_required_candidates": (
+            set(reviewer) if reviewer is not None else None
+        ),
         "run": bool(value.get("run", False)),
     }
 
@@ -270,6 +275,11 @@ def create_app(
 ) -> Starlette:
     config = config.resolved()
     launcher = launcher or CampaignLauncher(config)
+
+    async def index(_request: Request) -> Response:
+        return FileResponse(
+            STATIC_ROOT / "index.html", headers={"Cache-Control": "no-cache"}
+        )
 
     async def health(_request: Request) -> Response:
         return JSONResponse({"status": "ok", "schema_version": 1})
@@ -348,6 +358,20 @@ def create_app(
             return _error(str(error), 400)
         return JSONResponse({"status": "started", "runner": launch}, status_code=202)
 
+    async def campaign_report(request: Request) -> Response:
+        try:
+            path = _campaign_dir(config, request.path_params["campaign_id"])
+            report = path / "report" / "report.html"
+            if not report.is_file():
+                raise FileNotFoundError(report)
+        except FileNotFoundError:
+            return _error("Campaign report not found", 404)
+        return FileResponse(
+            report,
+            media_type="text/html",
+            headers={"Cache-Control": "no-cache"},
+        )
+
     async def campaign_events(request: Request) -> Response:
         try:
             path = _campaign_dir(config, request.path_params["campaign_id"])
@@ -391,6 +415,7 @@ def create_app(
     return Starlette(
         debug=False,
         routes=[
+            Route("/", index),
             Route("/api/health", health),
             Route("/api/config", configuration),
             Route("/api/suites", suites),
@@ -399,7 +424,9 @@ def create_app(
             Route("/api/campaigns", campaign_create, methods=["POST"]),
             Route("/api/campaigns/{campaign_id}", campaign_detail),
             Route("/api/campaigns/{campaign_id}/run", campaign_run, methods=["POST"]),
+            Route("/api/campaigns/{campaign_id}/report", campaign_report),
             Route("/api/campaigns/{campaign_id}/events", campaign_events),
+            Mount("/static", app=StaticFiles(directory=STATIC_ROOT), name="static"),
         ],
     )
 

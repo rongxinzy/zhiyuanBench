@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>知远评测</title>
+  <link rel="stylesheet" href="/static/vendor/pico/pico.min.css">
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <svg class="icon-sprite" aria-hidden="true">
+    <symbol id="icon-activity" viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></symbol>
+    <symbol id="icon-plus" viewBox="0 0 24 24"><path d="M5 12h14M12 5v14"/></symbol>
+    <symbol id="icon-history" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l4 2"/></symbol>
+    <symbol id="icon-play" viewBox="0 0 24 24"><path d="m6 3 14 9-14 9z"/></symbol>
+    <symbol id="icon-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></symbol>
+    <symbol id="icon-moon" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></symbol>
+    <symbol id="icon-refresh" viewBox="0 0 24 24"><path d="M20 11a8.1 8.1 0 0 0-15.5-2M4 4v5h5M4 13a8.1 8.1 0 0 0 15.5 2M20 20v-5h-5"/></symbol>
+    <symbol id="icon-external" viewBox="0 0 24 24"><path d="M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></symbol>
+    <symbol id="icon-chevron" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+    <symbol id="icon-check" viewBox="0 0 24 24"><path d="m20 6-11 11-5-5"/></symbol>
+  </svg>
+
+  <header class="app-header">
+    <div class="brand-block">
+      <span class="brand-mark"><svg class="icon"><use href="#icon-activity"/></svg></span>
+      <div><strong data-i18n="brand">知远评测</strong><span id="connection-state" data-i18n="connecting">连接中</span></div>
+    </div>
+    <div class="header-actions">
+      <button id="language-toggle" class="compact-action secondary" type="button" aria-label="Language">EN</button>
+      <button id="theme-toggle" class="icon-button secondary" type="button" data-zy-tooltip="切换主题" aria-label="切换主题">
+        <svg class="icon theme-icon-light"><use href="#icon-moon"/></svg>
+        <svg class="icon theme-icon-dark"><use href="#icon-sun"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="app-layout">
+    <aside class="sidebar" aria-label="Navigation">
+      <nav>
+        <button class="nav-item active" type="button" data-view="create">
+          <svg class="icon"><use href="#icon-plus"/></svg><span data-i18n="newRun">新建评测</span>
+        </button>
+        <button class="nav-item" type="button" data-view="history">
+          <svg class="icon"><use href="#icon-history"/></svg><span data-i18n="records">测试记录</span><span id="history-count" class="nav-count">0</span>
+        </button>
+      </nav>
+      <div class="sidebar-meta"><span data-i18n="recordsAt">记录目录</span><code id="records-root">-</code></div>
+    </aside>
+
+    <main class="main-content">
+      <section id="view-create" class="view active" data-view-panel="create">
+        <header class="page-header">
+          <div><h1 data-i18n="newEvaluation">新建对比评测</h1><p id="repo-path">-</p></div>
+        </header>
+
+        <form id="campaign-form" class="workspace-form">
+          <section class="form-section">
+            <div class="section-heading"><h2 data-i18n="branches">测试分支</h2><span data-i18n="immutableSha">启动后固定为 commit SHA</span></div>
+            <div class="branch-grid">
+              <fieldset class="branch-field">
+                <label for="baseline-branch" data-i18n="baseline">基线分支</label>
+                <select id="baseline-branch" required aria-busy="true"><option data-i18n="loading">加载中</option></select>
+                <label class="inline-check"><input id="baseline-reviewer" type="checkbox"><span data-i18n="requireReviewer">要求 reviewer subagent</span></label>
+              </fieldset>
+              <div class="compare-mark" aria-hidden="true">VS</div>
+              <fieldset class="branch-field">
+                <label for="candidate-branch" data-i18n="candidate">候选分支</label>
+                <select id="candidate-branch" required aria-busy="true"><option data-i18n="loading">加载中</option></select>
+                <label class="inline-check"><input id="candidate-reviewer" type="checkbox" checked><span data-i18n="requireReviewer">要求 reviewer subagent</span></label>
+              </fieldset>
+            </div>
+          </section>
+
+          <section class="form-section suite-section">
+            <div class="section-heading">
+              <div><h2 data-i18n="suites">测试集</h2><span id="suite-selection">0 / 8</span></div>
+              <label class="inline-check select-all"><input id="select-all-suites" type="checkbox" checked><span data-i18n="selectAll">全选</span></label>
+            </div>
+            <div class="table-shell">
+              <table class="suite-table">
+                <thead><tr><th class="check-column"></th><th data-i18n="suite">测试集</th><th data-i18n="bridge">Bridge</th><th data-i18n="samples">样本</th></tr></thead>
+                <tbody id="suite-list"><tr><td colspan="4"><span class="skeleton-line"></span></td></tr></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="form-section run-settings">
+            <div class="section-heading"><h2 data-i18n="runSettings">运行设置</h2></div>
+            <div class="settings-grid">
+              <label><span data-i18n="sampleLimit">样本上限</span><input id="sample-limit" type="number" min="1" placeholder="Full"></label>
+              <label><span data-i18n="concurrency">并发数</span><input id="concurrency" type="number" min="1" max="16" value="1"></label>
+            </div>
+          </section>
+
+          <footer class="form-actions">
+            <span id="form-validation" role="status"></span>
+            <button id="start-run" class="primary-action" type="submit"><svg class="icon"><use href="#icon-play"/></svg><span data-i18n="start">开始评测</span></button>
+          </footer>
+        </form>
+      </section>
+
+      <section id="view-history" class="view" data-view-panel="history" hidden>
+        <header class="page-header">
+          <div><h1 data-i18n="records">测试记录</h1><p data-i18n="recordsSubtitle">按创建时间倒序</p></div>
+          <button id="refresh-history" class="icon-button secondary" type="button" data-zy-tooltip="刷新" aria-label="刷新"><svg class="icon"><use href="#icon-refresh"/></svg></button>
+        </header>
+        <div class="table-shell history-shell">
+          <table class="history-table">
+            <thead><tr><th data-i18n="created">创建时间</th><th data-i18n="comparison">分支对比</th><th data-i18n="suites">测试集</th><th data-i18n="status">状态</th><th class="action-column"></th></tr></thead>
+            <tbody id="history-list"><tr><td colspan="5"><span class="skeleton-line"></span></td></tr></tbody>
+          </table>
+        </div>
+        <div id="history-empty" class="empty-state" hidden><svg class="icon"><use href="#icon-history"/></svg><strong data-i18n="noRecords">暂无测试记录</strong><button class="primary-action" type="button" data-view="create" data-i18n="newRun">新建评测</button></div>
+      </section>
+
+      <section id="view-detail" class="view" data-view-panel="detail" hidden>
+        <header class="page-header detail-header">
+          <div><button id="back-history" class="text-action" type="button" data-view="history" data-i18n="backRecords">返回记录</button><h1 id="detail-title">-</h1><p id="detail-branches">-</p></div>
+          <div class="detail-actions"><a id="static-report" class="button secondary" href="#" target="_blank" rel="noopener"><svg class="icon"><use href="#icon-external"/></svg><span data-i18n="staticReport">静态报告</span></a><button id="resume-run" class="primary-action" type="button"><svg class="icon"><use href="#icon-play"/></svg><span data-i18n="resume">恢复评测</span></button></div>
+        </header>
+        <div class="summary-strip">
+          <div><span data-i18n="status">状态</span><strong id="detail-status">-</strong></div>
+          <div><span data-i18n="completed">已完成</span><strong id="detail-completed">0 / 0</strong></div>
+          <div><span data-i18n="currentSuite">当前测试集</span><strong id="detail-current">-</strong></div>
+        </div>
+        <div class="table-shell">
+          <table class="progress-table">
+            <thead><tr><th data-i18n="suite">测试集</th><th data-i18n="status">状态</th><th data-i18n="progress">进度</th><th data-i18n="attempts">尝试</th></tr></thead>
+            <tbody id="progress-list"></tbody>
+          </table>
+        </div>
+        <section class="event-section"><div class="section-heading"><h2 data-i18n="liveEvents">实时事件</h2><span id="event-state">SSE</span></div><ol id="event-list" class="event-list"></ol></section>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

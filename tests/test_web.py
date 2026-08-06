@@ -101,6 +101,9 @@ class WebTests(unittest.TestCase):
         return path
 
     def test_health_suites_and_local_branches(self) -> None:
+        index = self.client.get("/")
+        self.assertEqual(index.status_code, 200)
+        self.assertIn("知远评测", index.text)
         self.assertEqual(self.client.get("/api/health").json()["status"], "ok")
         suites = self.client.get("/api/suites").json()
         self.assertEqual(len(suites), 8)
@@ -126,6 +129,7 @@ class WebTests(unittest.TestCase):
                 json={
                     "branches": [{"label": "candidate", "ref": "main"}],
                     "suites": ["bfcl-single-turn"],
+                    "reviewer_required_candidates": [],
                     "run": True,
                 },
             )
@@ -133,6 +137,7 @@ class WebTests(unittest.TestCase):
         self.assertEqual(response.status_code, 201)
         self.assertEqual(response.json()["runner"]["pid"], 1234)
         create.assert_called_once()
+        self.assertEqual(create.call_args.kwargs["reviewer_required_candidates"], set())
         self.assertEqual(
             [item.resolve() for item in self.launcher.launched], [path.resolve()]
         )
@@ -205,6 +210,15 @@ class WebTests(unittest.TestCase):
         )
         self.assertIn("event: campaign_created", response.text)
         self.assertIn('"sequence": 1', response.text)
+
+    def test_serves_standalone_campaign_report(self) -> None:
+        path = self._campaign()
+
+        response = self.client.get(f"/api/campaigns/{path.name}/report")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["content-type"].split(";")[0], "text/html")
+        self.assertIn(path.name, response.text)
 
 
 if __name__ == "__main__":
