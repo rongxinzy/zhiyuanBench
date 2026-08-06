@@ -538,10 +538,12 @@ def _phase_output_worker(
         output_queue.put((channel, None))
 
 
-def _inspect_journal_completed(log_dir: Path | None) -> int | None:
+def _inspect_journal_completed(
+    log_dir: Path | None, *, exclude: frozenset[Path] = frozenset()
+) -> int | None:
     if log_dir is None or not log_dir.is_dir():
         return None
-    logs = list(log_dir.glob("*.eval"))
+    logs = [path for path in log_dir.glob("*.eval") if path not in exclude]
     if not logs:
         return None
     latest = max(logs, key=lambda path: path.stat().st_mtime_ns)
@@ -576,6 +578,12 @@ def execute_phase(
     stderr_path = logs_dir / f"{phase.id}.stderr.log"
     environment = os.environ.copy()
     environment.update(phase.environment)
+    existing_progress_logs = (
+        frozenset(phase.progress_log_dir.glob("*.eval"))
+        if phase.progress_log_dir is not None
+        and phase.progress_log_dir.is_dir()
+        else frozenset()
+    )
     sink.emit(
         "phase_started",
         phase=phase.id,
@@ -641,7 +649,9 @@ def execute_phase(
                     pass
                 now = time.monotonic()
                 if now - last_heartbeat >= 10:
-                    completed = _inspect_journal_completed(phase.progress_log_dir)
+                    completed = _inspect_journal_completed(
+                        phase.progress_log_dir, exclude=existing_progress_logs
+                    )
                     if (
                         completed is not None
                         and phase.expected_samples is not None

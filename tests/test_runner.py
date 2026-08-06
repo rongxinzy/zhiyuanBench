@@ -44,6 +44,20 @@ class RunnerTests(unittest.TestCase):
             self.assertTrue(_progress_advanced((2, 45), (3, 45)))
             self.assertFalse(_progress_advanced((45, 45), (1, 45)))
 
+    def test_inspect_journal_ignores_logs_from_previous_phase(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            old_log = root / "old.eval"
+            with zipfile.ZipFile(old_log, "w") as archive:
+                for index in range(45):
+                    archive.writestr(f"samples/old-{index}.json", "{}")
+            with zipfile.ZipFile(root / "current.eval", "w") as archive:
+                archive.writestr("samples/current.json", "{}")
+
+            self.assertEqual(
+                _inspect_journal_completed(root, exclude=frozenset({old_log})), 1
+            )
+
     def test_execute_phase_emits_numeric_progress(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
