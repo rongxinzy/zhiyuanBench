@@ -325,7 +325,6 @@ input[type="checkbox"]:checked {
   display: flex;
   height: calc(100vh - 52px);
   flex-direction: column;
-  justify-content: space-between;
   padding: 12px 8px;
   border-right: 1px solid var(--zy-border);
   background: var(--zy-surface);
@@ -334,6 +333,65 @@ input[type="checkbox"]:checked {
 .sidebar nav {
   display: grid;
   gap: 4px;
+}
+
+.sidebar-records {
+  min-height: 0;
+  margin-top: 20px;
+}
+
+.sidebar-section-label {
+  display: block;
+  padding: 0 10px 6px;
+  color: var(--zy-text-muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.sidebar-campaigns {
+  display: grid;
+  max-height: calc(100vh - 290px);
+  gap: 2px;
+  overflow-y: auto;
+}
+
+.sidebar-campaign {
+  display: grid;
+  width: 100%;
+  height: auto;
+  min-height: 52px;
+  justify-items: start;
+  gap: 1px;
+  padding: 7px 10px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--zy-text-secondary);
+  text-align: left;
+}
+
+.sidebar-campaign:hover,
+.sidebar-campaign.active {
+  border-color: transparent;
+  background: var(--zy-surface-raised);
+  color: var(--zy-foreground);
+}
+
+.sidebar-campaign.active {
+  font-weight: 600;
+}
+
+.sidebar-campaign-branches,
+.sidebar-campaign-meta {
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-campaign-meta {
+  color: var(--zy-text-muted);
+  font-size: 12px;
+  font-weight: 400;
 }
 
 .nav-item {
@@ -366,6 +424,7 @@ input[type="checkbox"]:checked {
 }
 
 .sidebar-meta {
+  margin-top: auto;
   display: grid;
   gap: 4px;
   padding: 8px;
@@ -607,6 +666,34 @@ tbody tr:hover td {
   font-size: 12px;
 }
 
+.form-feedback {
+  display: grid;
+  gap: 2px;
+}
+
+.runtime-readiness {
+  color: var(--zy-text-secondary);
+  font-size: 12px;
+}
+
+.runtime-readiness[data-state="ready"] {
+  color: var(--zy-success);
+}
+
+.runtime-readiness[data-state="unavailable"] {
+  color: var(--zy-warning);
+}
+
+.suite-unavailable {
+  opacity: 0.7;
+}
+
+.suite-unavailable-reason {
+  display: block;
+  color: var(--zy-warning);
+  font-size: 12px;
+}
+
 .action-column {
   width: 48px;
 }
@@ -840,7 +927,7 @@ progress {
   .app-layout { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
   .sidebar { position: sticky; z-index: 15; top: 52px; height: auto; flex-direction: row; padding: 6px 12px; border-right: 0; border-bottom: 1px solid var(--zy-border); }
   .sidebar nav { display: flex; }
-  .sidebar-meta { display: none; }
+  .sidebar-records, .sidebar-meta { display: none; }
   .nav-item { width: auto; }
   .main-content { padding: 20px 16px 40px; }
   .branch-grid { grid-template-columns: 1fr; }

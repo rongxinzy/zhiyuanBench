@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import json
 import os
 import subprocess
@@ -30,6 +31,10 @@ from zhiyuan_bench.registry import select_bridge, suite_by_id
 from zhiyuan_bench.worktrees import list_local_branches
 
 STATIC_ROOT = Path(__file__).with_name("static")
+MODEL_REQUIRED_ENVIRONMENT = (
+    "ZHIYUAN_MODEL_BASE_URL",
+    "ZHIYUAN_MODEL_ID",
+)
 
 
 @dataclass(frozen=True)
@@ -197,6 +202,74 @@ def _suite_payload() -> list[dict[str, Any]]:
     return result
 
 
+def _suite_readiness(suite_id: str) -> dict[str, Any]:
+    suite = suite_by_id(suite_id)
+    required_environment = list(MODEL_REQUIRED_ENVIRONMENT)
+    required_environment.extend(suite.required_environment)
+    if "sandbox" in suite.required_capabilities:
+        required_environment.append("DOCKER_HOST")
+    missing_environment = sorted(
+        {name for name in required_environment if not os.environ.get(name)}
+    )
+    missing_modules = sorted(
+        name
+        for name in suite.required_python_modules
+        if importlib.util.find_spec(name) is None
+    )
+    platform_supported = not suite.required_host_platforms or any(
+        sys.platform.startswith(platform)
+        for platform in suite.required_host_platforms
+    )
+    return {
+        "id": suite.id,
+        "ready": not missing_environment
+        and not missing_modules
+        and platform_supported,
+        "missing_environment": missing_environment,
+        "missing_python_modules": missing_modules,
+        "platform_supported": platform_supported,
+        "required_host_platforms": list(suite.required_host_platforms),
+    }
+
+
+def _readiness(
+    suite_ids: tuple[str, ...] | list[str] = CAMPAIGN_SUITES,
+) -> dict[str, Any]:
+    suites = [_suite_readiness(suite_id) for suite_id in suite_ids]
+    missing_model_environment = [
+        name for name in MODEL_REQUIRED_ENVIRONMENT if not os.environ.get(name)
+    ]
+    return {
+        "schema_version": 1,
+        "ready": not missing_model_environment,
+        "missing_environment": missing_model_environment,
+        "suites": suites,
+    }
+
+
+def _unavailable_message(readiness: dict[str, Any]) -> str:
+    unavailable = [suite for suite in readiness["suites"] if not suite["ready"]]
+    details = []
+    for suite in unavailable:
+        reasons = []
+        if suite["missing_environment"]:
+            reasons.append(
+                "missing environment " + ", ".join(suite["missing_environment"])
+            )
+        if suite["missing_python_modules"]:
+            reasons.append(
+                "missing Python modules "
+                + ", ".join(suite["missing_python_modules"])
+            )
+        if not suite["platform_supported"]:
+            reasons.append(
+                "requires host platform "
+                + " or ".join(suite["required_host_platforms"])
+            )
+        details.append(f"{suite['id']}: {'; '.join(reasons)}")
+    return "Selected suites are not ready: " + " | ".join(details)
+
+
 def _error(message: str, status_code: int) -> JSONResponse:
     return JSONResponse({"error": message}, status_code=status_code)
 
@@ -284,6 +357,9 @@ def create_app(
     async def health(_request: Request) -> Response:
         return JSONResponse({"status": "ok", "schema_version": 1})
 
+    async def readiness(_request: Request) -> Response:
+        return JSONResponse(_readiness())
+
     async def configuration(_request: Request) -> Response:
         return JSONResponse(
             {
@@ -318,6 +394,16 @@ def create_app(
         try:
             payload = _parse_create_payload(await request.json())
             should_run = payload.pop("run")
+            if should_run:
+                run_readiness = _readiness(payload["suite_ids"])
+                if any(not suite["ready"] for suite in run_readiness["suites"]):
+                    return JSONResponse(
+                        {
+                            "error": _unavailable_message(run_readiness),
+                            "readiness": run_readiness,
+                        },
+                        status_code=503,
+                    )
             path = await run_in_threadpool(
                 create_campaign,
                 repo=config.repo,
@@ -349,6 +435,17 @@ def create_app(
     async def campaign_run(request: Request) -> Response:
         try:
             path = _campaign_dir(config, request.path_params["campaign_id"])
+            campaign = read_campaign(path)
+            suite_ids = [str(item["id"]) for item in campaign["suites"]]
+            run_readiness = _readiness(suite_ids)
+            if any(not suite["ready"] for suite in run_readiness["suites"]):
+                return JSONResponse(
+                    {
+                        "error": _unavailable_message(run_readiness),
+                        "readiness": run_readiness,
+                    },
+                    status_code=503,
+                )
             launch = await run_in_threadpool(launcher.launch, path)
         except FileNotFoundError:
             return _error("Campaign not found", 404)
@@ -417,6 +514,7 @@ def create_app(
         routes=[
             Route("/", index),
             Route("/api/health", health),
+            Route("/api/readiness", readiness),
             Route("/api/config", configuration),
             Route("/api/suites", suites),
             Route("/api/branches", branches),

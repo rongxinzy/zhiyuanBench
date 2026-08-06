@@ -13,7 +13,9 @@ const I18N = {
     savedNotStarted: "记录已保存，但当前已有评测在运行", started: "评测已启动", resumed: "恢复请求已提交",
     loadFailed: "加载失败", requestFailed: "请求失败", noEvents: "等待事件", running: "运行中", succeeded: "成功",
     failed: "失败", skipped: "已跳过", createdStatus: "待运行", cancelled: "已取消", completedWithIssues: "完成但有异常",
-    refresh: "刷新", theme: "切换主题", open: "打开记录", selected: "已选择"
+    refresh: "刷新", theme: "切换主题", open: "打开记录", selected: "已选择", recentRecords: "近期记录",
+    checkingRuntime: "正在检查运行环境", runtimeReady: "所选测试集运行配置就绪", runtimeUnavailable: "所选测试集运行配置不完整",
+    unavailable: "不可用"
   },
   en: {
     brand: "Zhiyuan Bench", connecting: "Connecting", connected: "Service connected", disconnected: "Disconnected",
@@ -29,7 +31,9 @@ const I18N = {
     savedNotStarted: "Record saved, but another evaluation is active", started: "Evaluation started", resumed: "Resume requested",
     loadFailed: "Load failed", requestFailed: "Request failed", noEvents: "Waiting for events", running: "Running", succeeded: "Succeeded",
     failed: "Failed", skipped: "Skipped", createdStatus: "Pending", cancelled: "Cancelled", completedWithIssues: "Completed with issues",
-    refresh: "Refresh", theme: "Toggle theme", open: "Open record", selected: "selected"
+    refresh: "Refresh", theme: "Toggle theme", open: "Open record", selected: "selected", recentRecords: "Recent records",
+    checkingRuntime: "Checking runtime", runtimeReady: "Selected suites are configured", runtimeUnavailable: "Selected suites are not configured",
+    unavailable: "Unavailable"
   }
 };
 
@@ -39,6 +43,7 @@ const state = {
   suites: [],
   branches: [],
   campaigns: [],
+  readiness: null,
   currentCampaign: null,
   currentView: "create",
   eventSource: null,
@@ -111,6 +116,7 @@ function applyTranslations() {
   $("#sample-limit").placeholder = t("full");
   renderSuites();
   renderHistory();
+  renderReadiness();
   if (state.currentCampaign) renderDetail(state.currentCampaign);
 }
 
@@ -167,17 +173,22 @@ function renderSuites() {
   const preserve = $$(".suite-checkbox").length > 0;
   body.replaceChildren();
   state.suites.forEach((suite) => {
+    const suiteReadiness = state.readiness?.suites?.find((item) => item.id === suite.id);
+    const available = suiteReadiness?.ready !== false;
     const row = element("tr");
+    row.classList.toggle("suite-unavailable", !available);
     const checkCell = element("td", "check-column");
     const check = element("input", "suite-checkbox");
     check.type = "checkbox";
     check.value = suite.id;
-    check.checked = preserve ? selected.has(suite.id) : true;
+    check.checked = available && (preserve ? selected.has(suite.id) : true);
+    check.disabled = !available;
     check.setAttribute("aria-label", suite.id);
     check.addEventListener("change", updateSuiteSelection);
     checkCell.append(check);
     const suiteCell = element("td");
     suiteCell.append(element("span", "suite-title", suite.id), element("span", "suite-description", suite.description));
+    if (!available) suiteCell.append(element("span", "suite-unavailable-reason", `${t("unavailable")}: ${suiteReadinessReason(suiteReadiness)}`));
     row.append(checkCell, suiteCell, element("td", "", suite.bridge), element("td", "", suite.expected_samples ?? t("dynamic")));
     body.append(row);
   });
@@ -186,11 +197,55 @@ function renderSuites() {
 
 function updateSuiteSelection() {
   const boxes = $$(".suite-checkbox");
+  const available = boxes.filter((box) => !box.disabled);
   const count = boxes.filter((box) => box.checked).length;
-  $("#suite-selection").textContent = `${count} / ${boxes.length}`;
+  $("#suite-selection").textContent = `${count} / ${available.length}`;
   const all = $("#select-all-suites");
-  all.checked = count === boxes.length;
-  all.indeterminate = count > 0 && count < boxes.length;
+  all.disabled = available.length === 0;
+  all.checked = available.length > 0 && count === available.length;
+  all.indeterminate = count > 0 && count < available.length;
+  renderReadiness();
+}
+
+function suiteReadinessReason(readiness) {
+  if (!readiness) return t("runtimeUnavailable");
+  const reasons = [];
+  if (readiness.missing_environment?.length) reasons.push(readiness.missing_environment.join(", "));
+  if (readiness.missing_python_modules?.length) reasons.push(readiness.missing_python_modules.join(", "));
+  if (readiness.platform_supported === false) reasons.push(readiness.required_host_platforms.join(" / "));
+  return reasons.join(" · ") || t("runtimeUnavailable");
+}
+
+function selectedSuitesReady() {
+  if (!state.readiness) return false;
+  const selected = new Set($$(".suite-checkbox:checked").map((box) => box.value));
+  return selected.size > 0 && state.readiness.suites
+    .filter((suite) => selected.has(suite.id))
+    .every((suite) => suite.ready);
+}
+
+function campaignSuitesReady(campaign) {
+  if (!state.readiness) return false;
+  const selected = new Set(campaign.suites.map((suite) => suite.id));
+  return state.readiness.suites
+    .filter((suite) => selected.has(suite.id))
+    .every((suite) => suite.ready);
+}
+
+function renderReadiness() {
+  const target = $("#runtime-readiness");
+  const button = $("#start-run");
+  if (!target || !button) return;
+  if (!state.readiness) {
+    target.textContent = t("checkingRuntime");
+    target.dataset.state = "checking";
+    button.disabled = true;
+    return;
+  }
+  const ready = selectedSuitesReady();
+  target.textContent = t(ready ? "runtimeReady" : "runtimeUnavailable");
+  target.dataset.state = ready ? "ready" : "unavailable";
+  button.disabled = !ready;
 }
 
 function statusKey(status) {
@@ -219,6 +274,7 @@ function renderHistory() {
     if (body) body.replaceChildren();
     if (empty) empty.hidden = false;
     $("#history-count").textContent = state.campaigns.length;
+    renderSidebarCampaigns();
     return;
   }
   empty.hidden = true;
@@ -247,6 +303,27 @@ function renderHistory() {
     body.append(row);
   });
   $("#history-count").textContent = state.campaigns.length;
+  renderSidebarCampaigns();
+}
+
+function renderSidebarCampaigns() {
+  const list = $("#sidebar-campaigns");
+  if (!list) return;
+  list.replaceChildren();
+  state.campaigns.slice(0, 8).forEach((campaign) => {
+    const button = element("button", "sidebar-campaign");
+    button.type = "button";
+    button.title = campaign.campaign_id;
+    button.classList.toggle("active", state.currentCampaign?.campaign_id === campaign.campaign_id);
+    const branches = campaign.candidates.map((item) => item.source_ref).join(" → ");
+    const recordKey = campaign.campaign_id.split("__").at(-1);
+    button.append(
+      element("span", "sidebar-campaign-branches", branches),
+      element("span", "sidebar-campaign-meta", `${formatDate(campaign.created_at)} · #${recordKey} · ${t(statusKey(campaign.status))}`)
+    );
+    button.addEventListener("click", () => openCampaign(campaign.campaign_id));
+    list.append(button);
+  });
 }
 
 async function loadHistory() {
@@ -276,6 +353,7 @@ function progressCell(suite) {
 
 function renderDetail(campaign) {
   state.currentCampaign = campaign;
+  renderSidebarCampaigns();
   $("#detail-title").textContent = campaign.campaign_id;
   $("#detail-branches").textContent = campaignBranches(campaign);
   $("#detail-status").replaceChildren(statusNode(campaign.status));
@@ -283,7 +361,7 @@ function renderDetail(campaign) {
   $("#detail-completed").textContent = `${succeeded} / ${campaign.suites.length}`;
   $("#detail-current").textContent = campaign.current_suite || "-";
   $("#static-report").href = `/api/campaigns/${encodeURIComponent(campaign.campaign_id)}/report`;
-  $("#resume-run").disabled = campaign.status === "running" || campaign.status === "succeeded";
+  $("#resume-run").disabled = campaign.status === "running" || campaign.status === "succeeded" || !campaignSuitesReady(campaign);
   const body = $("#progress-list");
   body.replaceChildren();
   campaign.suites.forEach((suite) => {
@@ -386,7 +464,7 @@ async function submitCampaign(event) {
       showToast(`${t("requestFailed")}: ${error.message}`);
     }
   } finally {
-    button.disabled = false;
+    button.disabled = !selectedSuitesReady();
     button.removeAttribute("aria-busy");
   }
 }
@@ -411,13 +489,14 @@ async function resumeCurrent() {
 
 async function bootstrap() {
   try {
-    const [config, suites, branches, campaigns] = await Promise.all([
-      api("/api/config"), api("/api/suites"), api("/api/branches"), api("/api/campaigns")
+    const [config, suites, branches, campaigns, readiness] = await Promise.all([
+      api("/api/config"), api("/api/suites"), api("/api/branches"), api("/api/campaigns"), api("/api/readiness")
     ]);
     state.config = config;
     state.suites = suites;
     state.branches = branches;
     state.campaigns = campaigns;
+    state.readiness = readiness;
     $("#repo-path").textContent = config.repo;
     $("#records-root").textContent = config.records_root;
     renderBranches();
@@ -442,7 +521,7 @@ document.addEventListener("DOMContentLoaded", () => {
   });
   $$(`[data-view]`).forEach((button) => button.addEventListener("click", () => switchView(button.dataset.view)));
   $("#select-all-suites").addEventListener("change", (event) => {
-    $$(".suite-checkbox").forEach((box) => { box.checked = event.target.checked; });
+    $$(".suite-checkbox:not(:disabled)").forEach((box) => { box.checked = event.target.checked; });
     updateSuiteSelection();
   });
   $("#campaign-form").addEventListener("submit", submitCampaign);

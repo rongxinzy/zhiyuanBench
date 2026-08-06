@@ -95,7 +95,7 @@ The local Web application is an optional install so the base runner remains depe
 python -m pip install "zhiyuan-bench[web]"
 ```
 
-`zhiyuan-bench ui` binds to `127.0.0.1:8765` by default. The responsive Chinese/English interface lists the eight campaign suites and local Git branches, creates and resumes campaign records, and streams prompt-free progress through SSE. It supports light and dark themes and links each record to its standalone report. Web-triggered evaluation runs execute in a separate Python process and retain launcher stdout/stderr under the campaign record. The API refuses a second live runner and never terminates an existing process.
+`zhiyuan-bench ui` binds to `127.0.0.1:8765` by default. The responsive Chinese/English interface lists the eight campaign suites and local Git branches, keeps recent campaign records visible in the sidebar, creates and resumes campaign records, and streams prompt-free progress through SSE. It supports light and dark themes and links each record to its standalone report. Web-triggered evaluation runs execute in a separate Python process and retain launcher stdout/stderr under the campaign record. The API exposes prompt-free runtime readiness at `/api/readiness`, rejects an unready run before creating a campaign, refuses a second live runner, and never terminates an existing process.
 
 The interface uses vendored Pico CSS 2.1.1 for accessible form and table primitives, a small Zhiyuan semantic-token adapter, and inline Lucide icon paths. It has no frontend build step, CDN request, JavaScript framework, or runtime Node dependency.
 

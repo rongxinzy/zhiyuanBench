@@ -46,6 +46,10 @@
           <svg class="icon"><use href="#icon-history"/></svg><span data-i18n="records">测试记录</span><span id="history-count" class="nav-count">0</span>
         </button>
       </nav>
+      <section class="sidebar-records" aria-labelledby="recent-records-label">
+        <span id="recent-records-label" class="sidebar-section-label" data-i18n="recentRecords">近期记录</span>
+        <div id="sidebar-campaigns" class="sidebar-campaigns"></div>
+      </section>
       <div class="sidebar-meta"><span data-i18n="recordsAt">记录目录</span><code id="records-root">-</code></div>
     </aside>
 
@@ -95,7 +99,10 @@
           </section>
 
           <footer class="form-actions">
-            <span id="form-validation" role="status"></span>
+            <div class="form-feedback">
+              <span id="runtime-readiness" class="runtime-readiness" role="status" data-state="checking" data-i18n="checkingRuntime">正在检查运行环境</span>
+              <span id="form-validation" role="status"></span>
+            </div>
             <button id="start-run" class="primary-action" type="submit"><svg class="icon"><use href="#icon-play"/></svg><span data-i18n="start">开始评测</span></button>
           </footer>
         </form>
