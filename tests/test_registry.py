@@ -17,6 +17,47 @@ class RegistryTests(unittest.TestCase):
         bridge = select_bridge(suite)
         self.assertIn("subagent", bridge.capabilities)
 
+    def test_auto_selects_production_bridge_for_tau2(self) -> None:
+        for suite_id in (
+            "tau2-airline",
+            "tau2-banking",
+            "tau2-retail",
+            "tau2-telecom",
+        ):
+            with self.subTest(suite=suite_id):
+                suite = suite_by_id(suite_id)
+                bridge = select_bridge(suite)
+                self.assertEqual(bridge.id, "headless-pi-production")
+                self.assertFalse(suite.preflight_require_inspect_tool_call)
+                self.assertIn("user_simulator", bridge.capabilities)
+
+    def test_auto_selects_production_bridge_for_codeipi(self) -> None:
+        suite = suite_by_id("codeipi")
+        bridge = select_bridge(suite)
+
+        self.assertEqual(bridge.id, "headless-pi-production")
+        self.assertEqual(suite.model_roles, ("grader",))
+        self.assertIn("model_roles", bridge.capabilities)
+
+    def test_auto_selects_production_bridge_for_swe_bench(self) -> None:
+        suite = suite_by_id("swe-bench-verified-mini")
+
+        self.assertEqual(select_bridge(suite).id, "headless-pi-production")
+        self.assertEqual(suite.expected_samples, 50)
+        self.assertEqual(suite.required_host_platforms, ("linux", "darwin"))
+        self.assertEqual(suite.required_python_modules, ("swebench", "jsonlines"))
+
+    def test_auto_selects_production_bridge_for_agentdojo(self) -> None:
+        suite = suite_by_id("agentdojo")
+
+        self.assertEqual(select_bridge(suite).id, "headless-pi-production")
+        self.assertEqual(suite.expected_samples, 1014)
+        self.assertEqual(
+            suite.preflight_task_args,
+            ("with_injections=false", "with_sandbox_tasks=no"),
+        )
+        self.assertEqual(suite.required_python_modules, ("deepdiff", "email_validator"))
+
     def test_auto_selects_agentrl_bridge_for_non_os_suites(self) -> None:
         for suite_id in (
             "agentbench-alfworld-std",

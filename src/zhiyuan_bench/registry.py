@@ -39,11 +39,14 @@ BRIDGES = (
                 "inspect",
                 "model_api",
                 "inspect_tools",
+                "model_roles",
+                "multi_turn",
                 "sandbox",
                 "production_policy",
                 "progress_events",
                 "run_limits",
                 "subagent",
+                "user_simulator",
             }
         ),
         priority=10,
@@ -75,6 +78,96 @@ SUITES = (
         max_candidates=2,
     ),
     SuiteDefinition(
+        id="codeipi",
+        description="CodeIPI indirect prompt injection benchmark (45 samples)",
+        adapter="inspect-production",
+        required_capabilities=frozenset(
+            {
+                "inspect",
+                "inspect_tools",
+                "model_api",
+                "model_roles",
+                "multi_turn",
+                "production_policy",
+                "progress_events",
+                "run_limits",
+                "sandbox",
+                "subagent",
+            }
+        ),
+        expected_samples=45,
+        task="tools/zhiyuan/baseline.py@zhiyuan_ipi_coding_agent",
+        production_policy=True,
+        preflight=True,
+        preflight_task_args=("preflight_benign_only=true",),
+        max_candidates=2,
+        model_roles=("grader",),
+        notes=(
+            "Uses a direct Gemma grader role for detection and false-positive scoring.",
+            "The preflight selects one benign sample; the full run preserves all 45 samples.",
+        ),
+    ),
+    SuiteDefinition(
+        id="agentdojo",
+        description="AgentDojo utility and prompt-injection robustness (1014 samples)",
+        adapter="inspect-production",
+        required_capabilities=frozenset(
+            {
+                "inspect",
+                "inspect_tools",
+                "model_api",
+                "multi_turn",
+                "production_policy",
+                "progress_events",
+                "run_limits",
+                "sandbox",
+                "subagent",
+            }
+        ),
+        expected_samples=1014,
+        task="tools/zhiyuan/baseline.py@zhiyuan_agentdojo",
+        production_policy=True,
+        preflight=True,
+        preflight_task_args=("with_injections=false", "with_sandbox_tasks=no"),
+        max_candidates=2,
+        required_python_modules=("deepdiff", "email_validator"),
+        notes=(
+            "Preserves all five official task suites and formal state-based scorers.",
+            "The preflight uses one benign non-sandbox sample; the full run preserves all 1014 samples.",
+            "Seventy full-run samples require Docker sandboxes.",
+        ),
+    ),
+    SuiteDefinition(
+        id="swe-bench-verified-mini",
+        description="SWE-bench Verified Mini software engineering tasks (50 samples)",
+        adapter="inspect-production",
+        required_capabilities=frozenset(
+            {
+                "inspect",
+                "inspect_tools",
+                "model_api",
+                "multi_turn",
+                "production_policy",
+                "progress_events",
+                "run_limits",
+                "sandbox",
+                "subagent",
+            }
+        ),
+        expected_samples=50,
+        task="tools/zhiyuan/baseline.py@zhiyuan_swe_bench_verified_mini",
+        production_policy=True,
+        preflight=True,
+        max_candidates=2,
+        required_host_platforms=("linux", "darwin"),
+        required_python_modules=("swebench", "jsonlines"),
+        notes=(
+            "Uses pinned Verified Mini data and public pre-built DockerHub images.",
+            "The official scorer requires a POSIX controller host.",
+            "Images are large; start with a one-sample production preflight.",
+        ),
+    ),
+    SuiteDefinition(
         id="bfcl-single-turn",
         description="BFCL supported single-turn categories",
         adapter="inspect-bfcl",
@@ -83,6 +176,44 @@ SUITES = (
         ),
         expected_samples=None,
         task="tools/zhiyuan/baseline.py@zhiyuan_bfcl",
+    ),
+    *(
+        SuiteDefinition(
+            id=f"tau2-{domain}",
+            description=f"Tau2 {domain} stateful customer-service task",
+            adapter="inspect-agentbench",
+            required_capabilities=frozenset(
+                {
+                    "inspect",
+                    "inspect_tools",
+                    "model_api",
+                    "model_roles",
+                    "multi_turn",
+                    "production_policy",
+                    "progress_events",
+                    "run_limits",
+                    "subagent",
+                    "user_simulator",
+                }
+            ),
+            expected_samples=expected_samples,
+            task=f"tools/zhiyuan/baseline.py@zhiyuan_tau2_{domain}",
+            production_policy=True,
+            preflight=True,
+            preflight_require_inspect_tool_call=False,
+            max_candidates=2,
+            model_roles=("user",),
+            notes=(
+                "Uses a direct Gemma model role for the Tau2 user simulator.",
+                "Tau2 is token intensive; start with a one-sample preflight.",
+            ),
+        )
+        for domain, expected_samples in (
+            ("airline", 50),
+            ("banking", 97),
+            ("retail", 114),
+            ("telecom", 114),
+        )
     ),
     *(
         SuiteDefinition(

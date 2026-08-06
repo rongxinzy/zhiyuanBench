@@ -9,6 +9,13 @@ It has no installed runtime dependencies beyond Python 3.11. Inspect, RongxinAI,
 | Suite | Runtime | Coverage | Required external capability |
 | --- | --- | --- | --- |
 | `agentbench-os-dev` | Inspect Evals | RongxinAI production policy, Inspect sandbox tools, isolated reviewer subagent | Docker sandbox |
+| `tau2-airline` | Inspect Evals | Stateful customer-service tools, policy adherence, simulated user | Direct Gemma user model role |
+| `tau2-banking` | Inspect Evals | Stateful banking tools, verification and offline KB retrieval | Direct Gemma user model role |
+| `tau2-retail` | Inspect Evals | Stateful retail tools, policy adherence, simulated user | Direct Gemma user model role |
+| `tau2-telecom` | Inspect Evals | Stateful telecom and user tools, troubleshooting workflow | Direct Gemma user model role |
+| `codeipi` | Inspect Evals | Indirect prompt-injection resistance and coding task completion | Remote Docker and direct Gemma grader role |
+| `agentdojo` | Inspect Evals | Stateful tool use, utility, and prompt-injection robustness across five application domains | Optional Python dependencies; 70 samples use remote Docker |
+| `swe-bench-verified-mini` | Inspect Evals | Repository exploration, editing, debugging, and test-driven issue resolution | POSIX controller, remote Docker, official Python dependency, and large public images |
 | `agentbench-alfworld-std` | AgentRL | Pi/model multi-turn native function calling | ALFWorld task worker and assets |
 | `agentbench-dbbench-std` | AgentRL | Pi/model multi-turn native function calling | DBBench workers, MySQL/SQLite, Redis isolation |
 | `agentbench-kg-std` | AgentRL | Pi/model multi-turn native function calling | KG worker and Freebase-compatible SPARQL service |
@@ -40,11 +47,52 @@ python -m zhiyuan_bench list-suites
 python -m zhiyuan_bench list-bridges
 python -m zhiyuan_bench run --suite agentbench-os-dev --workspace D:\rxzy\inspect_evals --candidate baseline=C:\tmp\RongxinAI-eval-candidate-1@FULL_SHA --candidate candidate=C:\tmp\RongxinAI-eval-candidate-2@FULL_SHA
 python -m zhiyuan_bench run --suite agentbench-dbbench-std --workspace D:\rxzy\inspect_evals --candidate candidate=C:\path\to\RongxinAI@FULL_SHA --limit 10 --concurrency 2
+python -m zhiyuan_bench run --suite tau2-airline --workspace D:\rxzy\inspect_evals --candidate candidate=C:\path\to\RongxinAI@FULL_SHA --limit 5
+python -m zhiyuan_bench compare --suite agentbench-os-dev --workspace D:\rxzy\inspect_evals --repo D:\rxzy\RongxinAI --branch baseline=branch-a --branch candidate=branch-b --reviewer-required candidate --output-root D:\eval-results\agentbench-os
 python -m zhiyuan_bench monitor .zhiyuan-bench\runs\RUN_ID --follow
 python -m zhiyuan_bench resume .zhiyuan-bench\runs\RUN_ID
+python -m zhiyuan_bench campaign list-suites
+python -m zhiyuan_bench campaign create --suite agentbench-os-dev --suite codeipi --repo D:\rxzy\RongxinAI --branch baseline=main --branch candidate=feature/agent --workspace D:\rxzy\inspect_evals --records-root D:\eval-records --run
+python -m zhiyuan_bench campaign run D:\eval-records\CAMPAIGN_ID
+python -m zhiyuan_bench ui --repo D:\rxzy\RongxinAI --workspace D:\rxzy\inspect_evals --records-root D:\eval-records
 ```
 
 Use `PYTHONPATH=src` when running directly from a checkout, or install the project in editable mode.
+
+`compare` resolves each Git ref to a full commit SHA and creates a detached, isolated worktree under the output root. The manifest records the source ref, repository, resolved SHA, and worktree path. Worktrees are retained by default for diagnosis and resume; pass `--cleanup-worktrees` to remove only worktrees created by that successful command.
+
+`campaign create` resolves every branch to a full SHA once, creates one shared isolated worktree per candidate, and persists a multi-suite record. Repeat `--suite` in the desired serial execution order. Add `--run` to execute immediately; otherwise use `campaign run` later to start or resume the record. Successful suites are never rerun. A missing dependency or unavailable service marks that suite as `skipped`, while an evaluation failure marks it as `failed`; both outcomes allow later suites to continue and can be retried by running the campaign again.
+
+Campaign records use a UTC timestamp, source refs, short SHAs, and a collision-resistant suffix:
+
+```text
+records/
+  20260806T073742Z__main-a1b2c3d4__feature-agent-e5f6a7b8__9c42/
+    campaign.json
+    events.jsonl
+    live-summary.json
+    worktrees/
+      baseline/
+      candidate/
+    suites/
+      agentbench-os-dev/
+        runs/
+          RUN_ID/
+            manifest.json
+            events.jsonl
+            logs/
+            report/
+```
+
+`campaign.json` is the authoritative resumable state, `events.jsonl` is append-only prompt-free history, and `live-summary.json` is an atomic compact view for dashboards. Suite run directories retain the existing raw logs, Inspect artifacts, validation output, and comparison reports. Benchmark prompts, targets, answers, and sample IDs are never copied into campaign progress files.
+
+The local Web application is an optional install so the base runner remains dependency-free:
+
+```text
+python -m pip install "zhiyuan-bench[web]"
+```
+
+`zhiyuan-bench ui` binds to `127.0.0.1:8765` by default. Its API lists the eight campaign suites and local Git branches, creates and resumes campaign records, and streams prompt-free progress through SSE. Web-triggered evaluation runs execute in a separate Python process and retain launcher stdout/stderr under the campaign record. The API refuses a second live runner and never terminates an existing process.
 
 ## Runtime configuration
 
@@ -55,9 +103,24 @@ ZHIYUAN_MODEL_BASE_URL=http://host:8000/v1
 ZHIYUAN_MODEL_ID=gemma-4-31B-it
 ZHIYUAN_MODEL_TEMPERATURE=0
 ZHIYUAN_MODEL_SEED=237
+ZHIYUAN_BRIDGE_TIMEOUT_SECONDS=1800
+ZHIYUAN_INSPECT_TIME_LIMIT_SECONDS=1860
+ZHIYUAN_INSPECT_MODEL_TIMEOUT_SECONDS=300
 ```
 
 Production OS suites also require `DOCKER_HOST`. Set `ZHIYUAN_SSH_TARGET` to make a separate SSH health check mandatory. The runner automatically sets `ZHIYUAN_ENABLE_SUBAGENT=true` when the selected production bridge advertises the isolated reviewer capability.
+
+For candidates selected by `--reviewer-required`, the runner also sets `ZHIYUAN_REQUIRE_REVIEWER_SUBAGENT=true`. The bridge then guarantees one isolated reviewer run before every non-cancelled terminal result, including agent budget exhaustion; reviewer timeout or failure remains a hard validation failure.
+
+`ZHIYUAN_BRIDGE_TIMEOUT_SECONDS` controls the complete main-agent session and is independent from the model HTTP idle timeout and `ZHIYUAN_SUBAGENT_TIMEOUT_MS`. Long production workflows should size all three explicitly; a main session timeout before `request_critique` is a bridge failure and cannot satisfy a reviewer-required gate.
+
+`ZHIYUAN_INSPECT_TIME_LIMIT_SECONDS` controls Inspect's outer per-sample limit. It defaults to the bridge session timeout plus 60 seconds and must remain greater than the bridge timeout, ensuring the bridge can persist a terminal success or failure before Inspect closes the sample.
+
+Suites with direct Inspect model roles also set a finite request and attempt deadline plus zero automatic retries. `ZHIYUAN_INSPECT_MODEL_TIMEOUT_SECONDS` defaults to `ZHIYUAN_HTTP_IDLE_TIMEOUT_MS` converted to seconds, preventing grader or user-simulator requests from retrying forever after the production bridge has completed.
+
+Tau2 suites use the configured Gemma endpoint directly for the independent user simulator role while the evaluated assistant runs through the RongxinAI production policy. They do not require Docker or AgentRL, but consume substantially more tokens than single-agent suites.
+
+When the model endpoint is a loopback URL, the runner automatically adds its host to `NO_PROXY` and `no_proxy` for Inspect model-role subprocesses. This prevents Python HTTP clients from sending an SSH-tunneled localhost request through a Windows system proxy.
 
 AgentRL suites additionally require:
 
@@ -79,7 +142,11 @@ Before any run, the framework verifies the candidate SHA and model API. Inspect 
 
 The output root contains one atomic `runner.lock`, preventing a second run. A lock is recovered only when its recorded process is no longer alive. Each Inspect phase records pre-existing matching container IDs before launch; cleanup considers only IDs created afterward and skips every container with mounts. AgentRL task-worker containers are controller-owned and are never deleted by this client.
 
-Inspect resume skips successful phases and repeats incomplete phases. AgentRL phases use a stable result store and pass it through `--resume`, so already completed samples are not rerun.
+Inspect resume skips successful phases and repeats incomplete phases. If a production validator fails, resume also repeats the corresponding preflight or full evaluation because Inspect can return process status 0 for an interrupted log. AgentRL phases use a stable result store and pass it through `--resume`, so already completed samples are not rerun.
+
+Every production-policy candidate is validated twice: once after its single-sample preflight and again immediately after its full evaluation. Missing reviewer capability, start, or completion evidence, any reviewer failure, any bridge failure, sample errors, identity mismatch, policy bypass, or missing Inspect tool evidence fails that candidate before the comparison report can be generated.
+
+Reviewer lifecycle validation applies to every candidate by default. For an A/B test where the baseline intentionally predates reviewer support, repeat `--reviewer-required LABEL` for only the candidates expected to exercise the reviewer. The reviewer bridge capability remains active for every production candidate; this option changes only which candidate results require observed start and completion evidence.
 
 ## Coverage boundaries
 

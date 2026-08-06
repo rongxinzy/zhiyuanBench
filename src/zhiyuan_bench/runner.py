@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import importlib.util
 import os
 import queue
 import re
@@ -13,6 +14,8 @@ import time
 import urllib.parse
 import urllib.request
 import uuid
+import zipfile
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -38,6 +41,7 @@ MODEL_ENVIRONMENT = (
     "ZHIYUAN_CANDIDATE_POLICY_MAX_ITERATIONS",
     "ZHIYUAN_ENABLE_SUBAGENT",
     "ZHIYUAN_SUBAGENT_TIMEOUT_MS",
+    "ZHIYUAN_BRIDGE_TIMEOUT_SECONDS",
     "ZHIYUAN_AGENTRL_CONTROLLER",
     "ZHIYUAN_AGENTRL_ROOT",
     "ZHIYUAN_AGENTRL_PYTHON",
@@ -48,6 +52,29 @@ MODEL_ENVIRONMENT = (
 PROGRESS_PATTERN = re.compile(
     r"\bSamples:\s*(\d{1,6})\s*/\s*(\d{1,6})(?!\d)", re.IGNORECASE
 )
+
+
+class SuiteUnavailableError(RuntimeError):
+    """The selected suite cannot run with the current local infrastructure."""
+
+
+def _append_no_proxy_host(value: str, host: str) -> str:
+    entries = [entry.strip() for entry in value.split(",") if entry.strip()]
+    if host.lower() not in {entry.lower() for entry in entries}:
+        entries.append(host)
+    return ",".join(entries)
+
+
+def _loopback_model_proxy_environment(base_url: str) -> dict[str, str]:
+    host = urllib.parse.urlsplit(base_url).hostname
+    if host is None or not (
+        host.lower() == "localhost" or host == "::1" or host.startswith("127.")
+    ):
+        return {}
+    return {
+        name: _append_no_proxy_host(os.environ.get(name, ""), host)
+        for name in ("NO_PROXY", "no_proxy")
+    }
 
 
 def parse_candidate(value: str) -> Candidate:
@@ -92,6 +119,8 @@ def _candidate_environment(
     suite: SuiteDefinition,
     bridge: BridgeDefinition,
     log_dir: Path,
+    *,
+    reviewer_required: bool = False,
 ) -> dict[str, str]:
     environment = {
         name: os.environ[name] for name in MODEL_ENVIRONMENT if name in os.environ
@@ -110,6 +139,16 @@ def _candidate_environment(
         )
         if "subagent" in bridge.capabilities:
             environment["ZHIYUAN_ENABLE_SUBAGENT"] = "true"
+        if reviewer_required:
+            environment["ZHIYUAN_REQUIRE_REVIEWER_SUBAGENT"] = "true"
+        if suite.model_roles:
+            base_url = environment.get("ZHIYUAN_MODEL_BASE_URL")
+            if base_url:
+                environment["ZHIYUAN_BASE_URL"] = base_url
+                environment.update(_loopback_model_proxy_environment(base_url))
+            environment["ZHIYUAN_API_KEY"] = (
+                environment.get("ZHIYUAN_MODEL_API_KEY") or "local-eval"
+            )
     else:
         environment.pop("ZHIYUAN_CANDIDATE_POLICY_MODULE", None)
     return environment
@@ -123,8 +162,12 @@ def build_phases(
     run_dir: Path,
     limit: int | None,
     concurrency: int = 1,
+    reviewer_required_candidates: set[str] | None = None,
 ) -> list[Phase]:
     phases: list[Phase] = []
+    reviewer_required = reviewer_required_candidates or {
+        candidate.label for candidate in candidates
+    }
     python = _python(workspace)
     if suite.adapter == "agentrl-agentbench-fc":
         for candidate in candidates:
@@ -195,9 +238,43 @@ def build_phases(
                     label=f"Production preflight for {candidate.label}",
                     command=command,
                     environment=_candidate_environment(
-                        candidate, suite, bridge, log_dir
+                        candidate,
+                        suite,
+                        bridge,
+                        log_dir,
+                        reviewer_required=candidate.label in reviewer_required,
                     ),
                     track_containers=True,
+                    progress_log_dir=log_dir,
+                    expected_samples=1,
+                )
+            )
+            phases.append(
+                Phase(
+                    id=f"validate-preflight-{candidate.label}",
+                    label=f"Validate production preflight for {candidate.label}",
+                    command=(
+                        python,
+                        "-m",
+                        "tools.zhiyuan.validate_production_log",
+                        "--log-dir",
+                        str(log_dir),
+                        "--candidate-id",
+                        candidate.revision,
+                        "--expected-samples",
+                        "1",
+                        *(
+                            ("--allow-no-inspect-tool-call",)
+                            if not suite.preflight_require_inspect_tool_call
+                            else ()
+                        ),
+                        *(
+                            ("--require-reviewer-subagent",)
+                            if candidate.label in reviewer_required
+                            else ()
+                        ),
+                    ),
+                    environment={},
                 )
             )
         log_dir = run_dir / "evals" / candidate.label / "full"
@@ -207,11 +284,50 @@ def build_phases(
                 id=f"eval-{candidate.label}",
                 label=f"Evaluate {candidate.label}",
                 command=command,
-                environment=_candidate_environment(candidate, suite, bridge, log_dir),
+                environment=_candidate_environment(
+                    candidate,
+                    suite,
+                    bridge,
+                    log_dir,
+                    reviewer_required=candidate.label in reviewer_required,
+                ),
                 track_containers="sandbox" in suite.required_capabilities,
+                progress_log_dir=log_dir,
+                expected_samples=limit or suite.expected_samples,
             )
         )
-    if suite.adapter == "inspect-agentbench" and len(candidates) == 2:
+        if suite.production_policy:
+            expected = limit or suite.expected_samples
+            if expected is None:
+                raise ValueError(
+                    f"Suite {suite.id} must declare expected_samples for production validation"
+                )
+            phases.append(
+                Phase(
+                    id=f"validate-full-{candidate.label}",
+                    label=f"Validate full production run for {candidate.label}",
+                    command=(
+                        python,
+                        "-m",
+                        "tools.zhiyuan.validate_production_log",
+                        "--log-dir",
+                        str(log_dir),
+                        "--candidate-id",
+                        candidate.revision,
+                        "--expected-samples",
+                        str(expected),
+                        *(
+                            ("--require-reviewer-subagent",)
+                            if candidate.label in reviewer_required
+                            else ()
+                        ),
+                        "--label",
+                        candidate.label,
+                    ),
+                    environment={},
+                )
+            )
+    if suite.production_policy and len(candidates) == 2:
         report_dir = run_dir / "report"
         expected = limit or suite.expected_samples
         command = (
@@ -226,8 +342,11 @@ def build_phases(
             "--expected-samples",
             str(expected),
             "--require-production-agent",
-            "--require-reviewer-subagent",
         )
+        if candidates[0].label in reviewer_required:
+            command += ("--require-baseline-reviewer-subagent",)
+        if candidates[1].label in reviewer_required:
+            command += ("--require-candidate-reviewer-subagent",)
         phases.append(
             Phase(
                 id="report",
@@ -266,13 +385,81 @@ def _inspect_command(
         "--log-dir",
         str(log_dir),
     ]
+    if suite.production_policy:
+        bridge_timeout = _positive_int_environment(
+            "ZHIYUAN_BRIDGE_TIMEOUT_SECONDS", default=600
+        )
+        inspect_time_limit = _positive_int_environment(
+            "ZHIYUAN_INSPECT_TIME_LIMIT_SECONDS", default=bridge_timeout + 60
+        )
+        if inspect_time_limit <= bridge_timeout:
+            raise ValueError(
+                "ZHIYUAN_INSPECT_TIME_LIMIT_SECONDS must be greater than "
+                "ZHIYUAN_BRIDGE_TIMEOUT_SECONDS so the bridge can persist its "
+                "terminal state"
+            )
+        command.extend(("--time-limit", str(inspect_time_limit)))
     if preflight:
-        command.extend(("--limit", "1", "-T", "require_inspect_tool_call=true"))
+        command.extend(
+            (
+                "--limit",
+                "1",
+                "-T",
+                "require_inspect_tool_call="
+                + str(suite.preflight_require_inspect_tool_call).lower(),
+            )
+        )
+        for task_arg in suite.preflight_task_args:
+            command.extend(("-T", task_arg))
     elif limit is not None:
         command.extend(("--limit", str(limit)))
     if suite.adapter == "inspect-bfcl":
         command.extend(("-T", "categories=all_single_turn"))
+    if suite.model_roles:
+        http_idle_timeout_ms = _positive_int_environment(
+            "ZHIYUAN_HTTP_IDLE_TIMEOUT_MS", default=300_000
+        )
+        model_timeout = _positive_int_environment(
+            "ZHIYUAN_INSPECT_MODEL_TIMEOUT_SECONDS",
+            default=max(1, (http_idle_timeout_ms + 999) // 1000),
+        )
+        command.extend(
+            (
+                "--timeout",
+                str(model_timeout),
+                "--attempt-timeout",
+                str(model_timeout),
+                "--max-retries",
+                "0",
+            )
+        )
+        model_id = os.environ.get("ZHIYUAN_MODEL_ID", "missing-model")
+        for role in suite.model_roles:
+            command.extend(("--model-role", f"{role}=openai-api/zhiyuan/{model_id}"))
+    if "user_simulator" in suite.required_capabilities:
+        if preflight:
+            command.extend(
+                (
+                    "-T",
+                    "message_limit=1",
+                    "-T",
+                    "user_max_tokens=256",
+                    "-T",
+                    "user_timeout_seconds=180",
+                )
+            )
     return tuple(command)
+
+
+def _positive_int_environment(name: str, *, default: int) -> int:
+    raw = os.environ.get(name, str(default)).strip()
+    try:
+        value = int(raw)
+    except ValueError as error:
+        raise ValueError(f"{name} must be a positive integer") from error
+    if value <= 0:
+        raise ValueError(f"{name} must be a positive integer")
+    return value
 
 
 def _verify_candidate(candidate: Candidate) -> None:
@@ -290,6 +477,27 @@ def _verify_candidate(candidate: Candidate) -> None:
 
 
 def _health_checks(suite: SuiteDefinition, sink: EventSink) -> None:
+    if suite.required_host_platforms and not any(
+        sys.platform.startswith(platform) for platform in suite.required_host_platforms
+    ):
+        raise RuntimeError(
+            f"Suite {suite.id} requires host platform "
+            + " or ".join(suite.required_host_platforms)
+            + f"; current platform is {sys.platform}"
+        )
+    if suite.required_host_platforms:
+        sink.emit("health_check", status="host_platform_ok")
+    missing_modules = [
+        name
+        for name in suite.required_python_modules
+        if importlib.util.find_spec(name) is None
+    ]
+    if missing_modules:
+        raise RuntimeError(
+            "Missing suite Python modules: " + ", ".join(missing_modules)
+        )
+    if suite.required_python_modules:
+        sink.emit("health_check", status="python_modules_ok")
     missing_environment = [
         name for name in suite.required_environment if not os.environ.get(name)
     ]
@@ -368,6 +576,33 @@ def _phase_output_worker(
         output_queue.put((channel, None))
 
 
+def _inspect_journal_completed(
+    log_dir: Path | None, *, exclude: frozenset[Path] = frozenset()
+) -> int | None:
+    if log_dir is None or not log_dir.is_dir():
+        return None
+    logs = [path for path in log_dir.glob("*.eval") if path not in exclude]
+    if not logs:
+        return None
+    latest = max(logs, key=lambda path: path.stat().st_mtime_ns)
+    try:
+        with zipfile.ZipFile(latest) as archive:
+            return sum(
+                name.startswith("samples/") and name.endswith(".json")
+                for name in archive.namelist()
+            )
+    except (OSError, zipfile.BadZipFile):
+        return None
+
+
+def _progress_advanced(
+    current: tuple[int, int] | None, observed: tuple[int, int]
+) -> bool:
+    return observed[0] <= observed[1] and (
+        current is None or observed[0] > current[0]
+    )
+
+
 def execute_phase(
     phase: Phase,
     *,
@@ -381,6 +616,12 @@ def execute_phase(
     stderr_path = logs_dir / f"{phase.id}.stderr.log"
     environment = os.environ.copy()
     environment.update(phase.environment)
+    existing_progress_logs = (
+        frozenset(phase.progress_log_dir.glob("*.eval"))
+        if phase.progress_log_dir is not None
+        and phase.progress_log_dir.is_dir()
+        else frozenset()
+    )
     sink.emit(
         "phase_started",
         phase=phase.id,
@@ -431,7 +672,7 @@ def execute_phase(
                         match = PROGRESS_PATTERN.search(line)
                         if match:
                             observed = (int(match.group(1)), int(match.group(2)))
-                            if observed != progress and observed[0] <= observed[1]:
+                            if _progress_advanced(progress, observed):
                                 progress = observed
                                 sink.emit(
                                     "phase_progress",
@@ -446,6 +687,26 @@ def execute_phase(
                     pass
                 now = time.monotonic()
                 if now - last_heartbeat >= 10:
+                    completed = _inspect_journal_completed(
+                        phase.progress_log_dir, exclude=existing_progress_logs
+                    )
+                    if (
+                        completed is not None
+                        and phase.expected_samples is not None
+                        and _progress_advanced(
+                            progress, (completed, phase.expected_samples)
+                        )
+                    ):
+                        progress = (completed, phase.expected_samples)
+                        sink.emit(
+                            "phase_progress",
+                            phase=phase.id,
+                            status="running",
+                            details={
+                                "completed": completed,
+                                "total": phase.expected_samples,
+                            },
+                        )
                     sink.emit(
                         "phase_heartbeat",
                         phase=phase.id,
@@ -486,6 +747,7 @@ def create_run(
     output_root: Path,
     limit: int | None = None,
     concurrency: int = 1,
+    reviewer_required_candidates: set[str] | None = None,
 ) -> Path:
     suite = suite_by_id(suite_id)
     bridge = select_bridge(suite, bridge_id)
@@ -497,6 +759,14 @@ def create_run(
         raise ValueError(
             f"Suite {suite.id} accepts {suite.min_candidates}.."
             f"{suite.max_candidates or 'many'} candidates"
+        )
+    candidate_labels = {candidate.label for candidate in candidates}
+    reviewer_required = reviewer_required_candidates or candidate_labels
+    unknown_reviewer_labels = reviewer_required - candidate_labels
+    if unknown_reviewer_labels:
+        raise ValueError(
+            "Reviewer-required candidates are not configured: "
+            + ", ".join(sorted(unknown_reviewer_labels))
         )
     run_id = _run_id()
     run_dir = output_root.resolve() / "runs" / run_id
@@ -511,6 +781,7 @@ def create_run(
         "limit": limit,
         "concurrency": concurrency,
         "candidates": [candidate.as_dict() for candidate in candidates],
+        "reviewer_required_candidates": sorted(reviewer_required),
         "created_at": datetime.now(UTC).isoformat(),
         "phases": {},
     }
@@ -534,7 +805,38 @@ def mark_manifest_running(manifest: dict[str, Any]) -> None:
     manifest.pop("completed_at", None)
 
 
-def run_manifest(run_dir: Path, *, health_checks: bool = True) -> None:
+def invalidate_failed_validation_sources(manifest: dict[str, Any]) -> bool:
+    states = manifest.get("phases")
+    if not isinstance(states, dict):
+        return False
+    changed = False
+    for validation_prefix, source_prefix in (
+        ("validate-preflight-", "preflight-"),
+        ("validate-full-", "eval-"),
+    ):
+        for phase_id, state in list(states.items()):
+            if not phase_id.startswith(validation_prefix) or not isinstance(
+                state, dict
+            ):
+                continue
+            if state.get("status") != "failed":
+                continue
+            source_id = source_prefix + phase_id.removeprefix(validation_prefix)
+            source_state = states.get(source_id)
+            if isinstance(source_state, dict) and source_state.get(
+                "status"
+            ) == "succeeded":
+                source_state["status"] = "failed"
+                changed = True
+    return changed
+
+
+def run_manifest(
+    run_dir: Path,
+    *,
+    health_checks: bool = True,
+    event_listener: Callable[[dict[str, Any]], None] | None = None,
+) -> None:
     manifest = read_manifest(run_dir)
     run_id = str(manifest["run_id"])
     suite = suite_by_id(str(manifest["suite"]))
@@ -546,6 +848,15 @@ def run_manifest(run_dir: Path, *, health_checks: bool = True) -> None:
             label=str(item["label"]),
             root=Path(str(item["root"])),
             revision=str(item["revision"]),
+            source_ref=(
+                str(item["source_ref"]) if item.get("source_ref") is not None else None
+            ),
+            source_repo=(
+                Path(str(item["source_repo"]))
+                if item.get("source_repo") is not None
+                else None
+            ),
+            managed_worktree=bool(item.get("managed_worktree", False)),
         )
         for item in manifest["candidates"]
     ]
@@ -557,8 +868,20 @@ def run_manifest(run_dir: Path, *, health_checks: bool = True) -> None:
         run_dir,
         manifest.get("limit"),
         int(manifest.get("concurrency", 1)),
+        set(
+            str(label)
+            for label in manifest.get(
+                "reviewer_required_candidates",
+                [candidate.label for candidate in candidates],
+            )
+        ),
     )
-    sink = EventSink(run_dir / "events.jsonl", run_id, stream=sys.stdout)
+    sink = EventSink(
+        run_dir / "events.jsonl",
+        run_id,
+        stream=sys.stdout,
+        listener=event_listener,
+    )
     tracker = None
     docker_host = os.environ.get("DOCKER_HOST")
     if docker_host and "sandbox" in suite.required_capabilities:
@@ -566,6 +889,7 @@ def run_manifest(run_dir: Path, *, health_checks: bool = True) -> None:
     with RunLock(output_root / "runner.lock", run_id):
         try:
             mark_manifest_running(manifest)
+            invalidate_failed_validation_sources(manifest)
             write_manifest(run_dir, manifest)
             sink.emit(
                 "run_started",
@@ -575,7 +899,10 @@ def run_manifest(run_dir: Path, *, health_checks: bool = True) -> None:
             for candidate in candidates:
                 _verify_candidate(candidate)
             if health_checks:
-                _health_checks(suite, sink)
+                try:
+                    _health_checks(suite, sink)
+                except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+                    raise SuiteUnavailableError(str(error)) from error
             for phase in phases:
                 phase_state = manifest["phases"].setdefault(phase.id, {})
                 if phase_state.get("status") == "succeeded":
@@ -619,6 +946,7 @@ def run_manifest(run_dir: Path, *, health_checks: bool = True) -> None:
                             },
                         )
                 phase_state["status"] = "succeeded" if return_code == 0 else "failed"
+                invalidate_failed_validation_sources(manifest)
                 write_manifest(run_dir, manifest)
                 if return_code != 0:
                     raise RuntimeError(
