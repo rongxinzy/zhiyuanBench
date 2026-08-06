@@ -9,6 +9,17 @@ from zhiyuan_bench.events import EventSink, monitor
 
 
 class EventTests(unittest.TestCase):
+    def test_sink_notifies_listener_after_persisting_event(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "events.jsonl"
+            observed: list[dict[str, object]] = []
+            sink = EventSink(path, "run-1", listener=observed.append)
+
+            event = sink.emit("phase_started", phase="eval", status="running")
+
+            self.assertEqual(observed, [event])
+            self.assertTrue(path.read_text(encoding="utf-8").endswith("\n"))
+
     def test_jsonl_events_are_sequenced_and_prompt_free(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "events.jsonl"

@@ -6,6 +6,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from zhiyuan_bench.campaigns import CAMPAIGN_SUITES, create_campaign, run_campaign
 from zhiyuan_bench.events import monitor
 from zhiyuan_bench.registry import BRIDGES, SUITES, select_bridge, suite_by_id
 from zhiyuan_bench.runner import create_run, parse_candidate, run_manifest
@@ -70,6 +71,31 @@ def _parser() -> argparse.ArgumentParser:
     watch = commands.add_parser("monitor", help="Read prompt-free JSONL progress")
     watch.add_argument("run_dir", type=Path)
     watch.add_argument("--follow", action="store_true")
+
+    campaign = commands.add_parser(
+        "campaign", help="Create, run, or resume a persistent multi-suite campaign"
+    )
+    campaign_commands = campaign.add_subparsers(dest="campaign_command", required=True)
+    campaign_create = campaign_commands.add_parser("create")
+    campaign_create.add_argument("--suite", action="append", required=True)
+    campaign_create.add_argument("--repo", type=Path, required=True)
+    campaign_create.add_argument("--branch", action="append", required=True)
+    campaign_create.add_argument("--workspace", type=Path, required=True)
+    campaign_create.add_argument(
+        "--records-root", type=Path, default=Path(".zhiyuan-bench/records")
+    )
+    campaign_create.add_argument("--limit", type=int)
+    campaign_create.add_argument("--concurrency", type=int, default=1)
+    campaign_create.add_argument(
+        "--reviewer-required", action="append", metavar="LABEL"
+    )
+    campaign_create.add_argument("--run", action="store_true")
+    campaign_run = campaign_commands.add_parser("run")
+    campaign_run.add_argument("campaign_dir", type=Path)
+    campaign_run.add_argument(
+        "--no-health-checks", action="store_true", help=argparse.SUPPRESS
+    )
+    campaign_commands.add_parser("list-suites")
     return parser
 
 
@@ -90,6 +116,30 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command == "monitor":
             monitor(args.run_dir, follow=args.follow)
+            return 0
+        if args.command == "campaign":
+            if args.campaign_command == "list-suites":
+                for suite_id in CAMPAIGN_SUITES:
+                    print(suite_id)
+                return 0
+            if args.campaign_command == "create":
+                campaign_dir = create_campaign(
+                    repo=args.repo,
+                    branch_values=args.branch,
+                    suite_ids=args.suite,
+                    workspace=args.workspace,
+                    records_root=args.records_root,
+                    limit=args.limit,
+                    concurrency=args.concurrency,
+                    reviewer_required_candidates=(
+                        set(args.reviewer_required) if args.reviewer_required else None
+                    ),
+                )
+                print(f"Campaign directory: {campaign_dir}", flush=True)
+                if args.run:
+                    run_campaign(campaign_dir)
+                return 0
+            run_campaign(args.campaign_dir, health_checks=not args.no_health_checks)
             return 0
         if args.command in {"run", "compare"}:
             if args.limit is not None and args.limit <= 0:

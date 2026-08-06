@@ -51,11 +51,39 @@ python -m zhiyuan_bench run --suite tau2-airline --workspace D:\rxzy\inspect_eva
 python -m zhiyuan_bench compare --suite agentbench-os-dev --workspace D:\rxzy\inspect_evals --repo D:\rxzy\RongxinAI --branch baseline=branch-a --branch candidate=branch-b --reviewer-required candidate --output-root D:\eval-results\agentbench-os
 python -m zhiyuan_bench monitor .zhiyuan-bench\runs\RUN_ID --follow
 python -m zhiyuan_bench resume .zhiyuan-bench\runs\RUN_ID
+python -m zhiyuan_bench campaign list-suites
+python -m zhiyuan_bench campaign create --suite agentbench-os-dev --suite codeipi --repo D:\rxzy\RongxinAI --branch baseline=main --branch candidate=feature/agent --workspace D:\rxzy\inspect_evals --records-root D:\eval-records --run
+python -m zhiyuan_bench campaign run D:\eval-records\CAMPAIGN_ID
 ```
 
 Use `PYTHONPATH=src` when running directly from a checkout, or install the project in editable mode.
 
 `compare` resolves each Git ref to a full commit SHA and creates a detached, isolated worktree under the output root. The manifest records the source ref, repository, resolved SHA, and worktree path. Worktrees are retained by default for diagnosis and resume; pass `--cleanup-worktrees` to remove only worktrees created by that successful command.
+
+`campaign create` resolves every branch to a full SHA once, creates one shared isolated worktree per candidate, and persists a multi-suite record. Repeat `--suite` in the desired serial execution order. Add `--run` to execute immediately; otherwise use `campaign run` later to start or resume the record. Successful suites are never rerun. A missing dependency or unavailable service marks that suite as `skipped`, while an evaluation failure marks it as `failed`; both outcomes allow later suites to continue and can be retried by running the campaign again.
+
+Campaign records use a UTC timestamp, source refs, short SHAs, and a collision-resistant suffix:
+
+```text
+records/
+  20260806T073742Z__main-a1b2c3d4__feature-agent-e5f6a7b8__9c42/
+    campaign.json
+    events.jsonl
+    live-summary.json
+    worktrees/
+      baseline/
+      candidate/
+    suites/
+      agentbench-os-dev/
+        runs/
+          RUN_ID/
+            manifest.json
+            events.jsonl
+            logs/
+            report/
+```
+
+`campaign.json` is the authoritative resumable state, `events.jsonl` is append-only prompt-free history, and `live-summary.json` is an atomic compact view for dashboards. Suite run directories retain the existing raw logs, Inspect artifacts, validation output, and comparison reports. Benchmark prompts, targets, answers, and sample IDs are never copied into campaign progress files.
 
 ## Runtime configuration
 

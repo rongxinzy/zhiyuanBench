@@ -4,16 +4,24 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TextIO
 
 
 class EventSink:
-    def __init__(self, path: Path, run_id: str, stream: TextIO | None = None) -> None:
+    def __init__(
+        self,
+        path: Path,
+        run_id: str,
+        stream: TextIO | None = None,
+        listener: Callable[[dict[str, Any]], None] | None = None,
+    ) -> None:
         self.path = path
         self.run_id = run_id
         self.stream = stream
+        self.listener = listener
         self.sequence = self._last_sequence()
         path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -61,6 +69,8 @@ class EventSink:
             target.flush()
         if self.stream is not None:
             print(format_event(event), file=self.stream, flush=True)
+        if self.listener is not None:
+            self.listener(event)
         return event
 
 

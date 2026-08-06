@@ -15,6 +15,7 @@ import urllib.parse
 import urllib.request
 import uuid
 import zipfile
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -51,6 +52,10 @@ MODEL_ENVIRONMENT = (
 PROGRESS_PATTERN = re.compile(
     r"\bSamples:\s*(\d{1,6})\s*/\s*(\d{1,6})(?!\d)", re.IGNORECASE
 )
+
+
+class SuiteUnavailableError(RuntimeError):
+    """The selected suite cannot run with the current local infrastructure."""
 
 
 def _append_no_proxy_host(value: str, host: str) -> str:
@@ -826,7 +831,12 @@ def invalidate_failed_validation_sources(manifest: dict[str, Any]) -> bool:
     return changed
 
 
-def run_manifest(run_dir: Path, *, health_checks: bool = True) -> None:
+def run_manifest(
+    run_dir: Path,
+    *,
+    health_checks: bool = True,
+    event_listener: Callable[[dict[str, Any]], None] | None = None,
+) -> None:
     manifest = read_manifest(run_dir)
     run_id = str(manifest["run_id"])
     suite = suite_by_id(str(manifest["suite"]))
@@ -866,7 +876,12 @@ def run_manifest(run_dir: Path, *, health_checks: bool = True) -> None:
             )
         ),
     )
-    sink = EventSink(run_dir / "events.jsonl", run_id, stream=sys.stdout)
+    sink = EventSink(
+        run_dir / "events.jsonl",
+        run_id,
+        stream=sys.stdout,
+        listener=event_listener,
+    )
     tracker = None
     docker_host = os.environ.get("DOCKER_HOST")
     if docker_host and "sandbox" in suite.required_capabilities:
@@ -884,7 +899,10 @@ def run_manifest(run_dir: Path, *, health_checks: bool = True) -> None:
             for candidate in candidates:
                 _verify_candidate(candidate)
             if health_checks:
-                _health_checks(suite, sink)
+                try:
+                    _health_checks(suite, sink)
+                except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+                    raise SuiteUnavailableError(str(error)) from error
             for phase in phases:
                 phase_state = manifest["phases"].setdefault(phase.id, {})
                 if phase_state.get("status") == "succeeded":
