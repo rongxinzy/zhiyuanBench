@@ -30,6 +30,7 @@ from zhiyuan_bench.campaigns import (
     read_campaign,
 )
 from zhiyuan_bench.locking import RunLock
+from zhiyuan_bench.persistence import atomic_write_text
 from zhiyuan_bench.registry import select_bridge, suite_by_id
 from zhiyuan_bench.worktrees import list_local_branches
 
@@ -37,6 +38,9 @@ STATIC_ROOT = Path(__file__).with_name("static")
 MODEL_REQUIRED_ENVIRONMENT = (
     "ZHIYUAN_MODEL_BASE_URL",
     "ZHIYUAN_MODEL_ID",
+)
+TERMINAL_CAMPAIGN_STATUSES = frozenset(
+    {"succeeded", "completed_with_issues", "cancelled"}
 )
 
 
@@ -73,14 +77,10 @@ def _process_alive(pid: int) -> bool:
 
 
 def _write_json(path: Path, value: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(f".tmp-{os.getpid()}")
-    temporary.write_text(
+    atomic_write_text(
+        path,
         json.dumps(value, ensure_ascii=True, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-        newline="\n",
     )
-    os.replace(temporary, path)
 
 
 class CampaignLauncher:
@@ -121,8 +121,10 @@ class CampaignLauncher:
             except (OSError, TypeError, ValueError):
                 previous_pid = -1
                 campaign_status = "unknown"
-            terminal = {"succeeded", "completed_with_issues", "cancelled"}
-            if _process_alive(previous_pid) and campaign_status not in terminal:
+            if (
+                _process_alive(previous_pid)
+                and campaign_status not in TERMINAL_CAMPAIGN_STATUSES
+            ):
                 raise CampaignConflictError(
                     f"Campaign runner is already active with PID {previous_pid}"
                 )
@@ -555,22 +557,31 @@ def create_app(
         async def stream() -> Any:
             sequence = after
             idle_ticks = 0
-            while True:
-                events = await run_in_threadpool(
-                    _read_events, path / "events.jsonl", sequence
-                )
-                for event in events:
-                    sequence = max(sequence, int(event["sequence"]))
-                    yield _sse(event)
-                if not follow:
-                    return
-                if await request.is_disconnected():
-                    return
-                idle_ticks += 1
-                if idle_ticks >= 30:
-                    yield ": keep-alive\n\n"
-                    idle_ticks = 0
-                await asyncio.sleep(0.5)
+            try:
+                while True:
+                    events = await run_in_threadpool(
+                        _read_events, path / "events.jsonl", sequence
+                    )
+                    for event in events:
+                        sequence = max(sequence, int(event["sequence"]))
+                        yield _sse(event)
+                    if not follow:
+                        return
+                    try:
+                        campaign = await run_in_threadpool(read_campaign, path)
+                    except (OSError, ValueError):
+                        campaign = {}
+                    if campaign.get("status") in TERMINAL_CAMPAIGN_STATUSES:
+                        return
+                    if await request.is_disconnected():
+                        return
+                    idle_ticks += 1
+                    if idle_ticks >= 30:
+                        yield ": keep-alive\n\n"
+                        idle_ticks = 0
+                    await asyncio.sleep(0.5)
+            except asyncio.CancelledError:
+                return
 
         return StreamingResponse(
             stream(),
@@ -618,4 +629,10 @@ def run_web_server(
         )
         browser_timer.daemon = True
         browser_timer.start()
-    uvicorn.run(create_app(config), host=host, port=port, log_level="info")
+    uvicorn.run(
+        create_app(config),
+        host=host,
+        port=port,
+        log_level="info",
+        timeout_graceful_shutdown=3,
+    )

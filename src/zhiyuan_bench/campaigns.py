@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 import sys
 import uuid
@@ -14,6 +13,7 @@ from typing import Any
 from zhiyuan_bench.events import EventSink
 from zhiyuan_bench.locking import RunLock
 from zhiyuan_bench.models import Candidate
+from zhiyuan_bench.persistence import atomic_write_text
 from zhiyuan_bench.registry import select_bridge, suite_by_id
 from zhiyuan_bench.reports import write_campaign_report
 from zhiyuan_bench.runner import SuiteUnavailableError, create_run, run_manifest
@@ -37,14 +37,10 @@ CAMPAIGN_SUITES = (
 
 
 def _atomic_json(path: Path, value: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(f".tmp-{os.getpid()}")
-    temporary.write_text(
+    atomic_write_text(
+        path,
         json.dumps(value, ensure_ascii=True, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-        newline="\n",
     )
-    os.replace(temporary, path)
 
 
 def read_campaign(campaign_dir: Path) -> dict[str, Any]:
@@ -65,7 +61,7 @@ def write_campaign(campaign_dir: Path, manifest: dict[str, Any]) -> None:
     write_campaign_report(campaign_dir, summary)
 
 
-def _slug(value: str, *, limit: int = 28) -> str:
+def _slug(value: str, *, limit: int = 12) -> str:
     slug = re.sub(r"[^A-Za-z0-9]+", "-", value).strip("-").lower()
     return (slug or "ref")[:limit].rstrip("-")
 
@@ -278,7 +274,7 @@ def run_campaign(campaign_dir: Path, *, health_checks: bool = True) -> None:
         write_campaign(campaign_dir, manifest)
         sink.emit("campaign_started", status="running")
         try:
-            for suite_state in manifest["suites"]:
+            for suite_index, suite_state in enumerate(manifest["suites"]):
                 if suite_state["status"] == "succeeded":
                     continue
                 suite_id = str(suite_state["id"])
@@ -298,7 +294,7 @@ def run_campaign(campaign_dir: Path, *, health_checks: bool = True) -> None:
                         bridge_id=str(suite_state["bridge"]),
                         candidates=candidates,
                         workspace=Path(str(manifest["workspace"])),
-                        output_root=campaign_dir / "suites" / suite_id,
+                        output_root=campaign_dir / "_runs" / f"{suite_index:02d}",
                         limit=manifest.get("limit"),
                         concurrency=int(manifest["concurrency"]),
                         reviewer_required_candidates=set(

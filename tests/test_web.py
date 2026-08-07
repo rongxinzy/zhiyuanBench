@@ -333,6 +333,28 @@ class WebTests(unittest.TestCase):
         self.assertIn("event: campaign_created", response.text)
         self.assertIn('"sequence": 1', response.text)
 
+    def test_terminal_campaign_ends_following_sse(self) -> None:
+        path = self._campaign()
+        manifest = json.loads((path / "campaign.json").read_text(encoding="utf-8"))
+        manifest["status"] = "succeeded"
+        write_campaign(path, manifest)
+        event = {
+            "schema_version": 1,
+            "sequence": 1,
+            "timestamp": datetime.now(UTC).isoformat(),
+            "run_id": path.name,
+            "event_type": "campaign_finished",
+            "phase": None,
+            "status": "succeeded",
+            "details": {},
+        }
+        (path / "events.jsonl").write_text(json.dumps(event) + "\n", encoding="utf-8")
+
+        response = self.client.get(f"/api/campaigns/{path.name}/events")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("event: campaign_finished", response.text)
+
     def test_serves_standalone_campaign_report(self) -> None:
         path = self._campaign()
 

@@ -54,6 +54,13 @@ const state = {
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
 const t = (key) => I18N[state.locale][key] || key;
+const terminalCampaignStatuses = new Set(["succeeded", "completed_with_issues", "cancelled"]);
+
+function closeEventStream() {
+  if (!state.eventSource) return;
+  state.eventSource.close();
+  state.eventSource = null;
+}
 
 function element(tag, className, text) {
   const node = document.createElement(tag);
@@ -354,6 +361,7 @@ function progressCell(suite) {
 
 function renderDetail(campaign) {
   state.currentCampaign = campaign;
+  if (terminalCampaignStatuses.has(campaign.status)) closeEventStream();
   renderSidebarCampaigns();
   $("#detail-title").textContent = campaign.campaign_id;
   $("#detail-branches").textContent = campaignBranches(campaign);
@@ -395,11 +403,12 @@ function appendEvent(event) {
   while (list.children.length > 80) list.lastElementChild.remove();
 }
 
-function openEventStream(id) {
-  if (state.eventSource) state.eventSource.close();
+function openEventStream(id, follow = true) {
+  closeEventStream();
   $("#event-list").replaceChildren(element("li", "event-empty", t("noEvents")));
   $("#event-state").textContent = "SSE";
-  const source = new EventSource(`/api/campaigns/${encodeURIComponent(id)}/events`);
+  const suffix = follow ? "" : "?follow=0";
+  const source = new EventSource(`/api/campaigns/${encodeURIComponent(id)}/events${suffix}`);
   state.eventSource = source;
   const types = ["campaign_created", "campaign_started", "suite_started", "suite_phase_started", "suite_phase_progress", "suite_run_finished", "suite_finished", "campaign_finished"];
   const receive = (message) => {
@@ -411,14 +420,21 @@ function openEventStream(id) {
   };
   types.forEach((type) => source.addEventListener(type, receive));
   source.onopen = () => { $("#event-state").textContent = t("connected"); };
-  source.onerror = () => { $("#event-state").textContent = t("connecting"); };
+  source.onerror = () => {
+    if (!follow) {
+      closeEventStream();
+      $("#event-state").textContent = t("disconnected");
+      return;
+    }
+    $("#event-state").textContent = t("connecting");
+  };
 }
 
 async function openCampaign(id) {
   const campaign = await loadDetail(id);
   if (!campaign) return;
   switchView("detail");
-  openEventStream(id);
+  openEventStream(id, !terminalCampaignStatuses.has(campaign.status));
 }
 
 async function submitCampaign(event) {
@@ -532,4 +548,5 @@ document.addEventListener("DOMContentLoaded", () => {
   window.setInterval(() => {
     if (state.currentView === "detail" && state.currentCampaign?.status === "running") loadDetail(state.currentCampaign.campaign_id, true);
   }, 3000);
+  window.addEventListener("pagehide", closeEventStream);
 });

@@ -65,7 +65,7 @@ Use `PYTHONPATH=src` when running directly from a checkout, or install the proje
 
 Managed candidate worktrees automatically reuse the source checkout's exact lockfile-matched policy build and headless Pi runtime dependencies, so the lightweight campaign flow does not copy or install the full application dependency tree for every branch. The source checkout remains the single dependency owner, and campaign creation fails before launch if a required package version does not match the selected candidate.
 
-Campaign records use a UTC timestamp, source refs, short SHAs, and a collision-resistant suffix:
+Campaign records use a UTC timestamp, bounded source-ref prefixes, short SHAs, and a collision-resistant suffix. Full source refs remain in `campaign.json` and the Web UI; bounded directory names leave space for Inspect artifacts under the Windows path limit:
 
 ```text
 records/
@@ -79,8 +79,8 @@ records/
     worktrees/
       baseline/
       candidate/
-    suites/
-      agentbench-os-dev/
+    _runs/
+      00/
         runs/
           RUN_ID/
             manifest.json
@@ -89,7 +89,7 @@ records/
             report/
 ```
 
-`campaign.json` is the authoritative resumable state, `events.jsonl` is append-only prompt-free history, and `live-summary.json` is an atomic compact view for dashboards. `report/report.html` is a standalone, responsive summary that can be archived or opened without the Web application; `report/summary.json` retains the same prompt-free data for later analysis. Suite run directories retain the existing raw logs, Inspect artifacts, validation output, and comparison reports. Benchmark prompts, targets, answers, and sample IDs are never copied into campaign progress files.
+`campaign.json` is the authoritative resumable state, `events.jsonl` is append-only prompt-free history, and `live-summary.json` is an atomic compact view for dashboards. `report/report.html` is a standalone, responsive summary that can be archived or opened without the Web application; `report/summary.json` retains the same prompt-free data for later analysis. Physical run directories use compact numeric suite positions to keep Inspect artifact paths below the Windows path limit; each run manifest retains the readable suite identity. Run directories retain the existing raw logs, Inspect artifacts, validation output, and comparison reports. Benchmark prompts, targets, answers, and sample IDs are never copied into campaign progress files.
 
 The local Web application is an optional install so the base runner remains dependency-free:
 
@@ -155,7 +155,7 @@ Before any run, the framework verifies the candidate SHA and model API. Inspect 
 
 ## Safety and resume behavior
 
-The output root contains one atomic `runner.lock`, preventing a second run. A lock is recovered only when its recorded process is no longer alive. Each Inspect phase records pre-existing matching container IDs before launch; cleanup considers only IDs created afterward and skips every container with mounts. AgentRL task-worker containers are controller-owned and are never deleted by this client.
+The output root contains one atomic `runner.lock`, preventing a second run. A lock is recovered only when its recorded process is no longer alive. Atomic state and report replacement retries transient Windows reader locks before failing. Each Inspect phase records pre-existing matching container IDs before launch; cleanup considers only IDs created afterward and skips every container with mounts. AgentRL task-worker containers are controller-owned and are never deleted by this client.
 
 Inspect resume skips successful phases and repeats incomplete phases. If a production validator fails, resume also repeats the corresponding preflight or full evaluation because Inspect can return process status 0 for an interrupted log. AgentRL phases use a stable result store and pass it through `--resume`, so already completed samples are not rerun.
 

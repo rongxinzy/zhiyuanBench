@@ -38,8 +38,22 @@ class CampaignTests(unittest.TestCase):
 
         self.assertEqual(
             value,
-            "20260806T073742Z__main-aaaaaaaa__feature-agent-bbbbbbbb__9c42",
+            "20260806T073742Z__main-aaaaaaaa__feature-agen-bbbbbbbb__9c42",
         )
+
+    def test_campaign_id_bounds_branch_fragments_for_windows_paths(self) -> None:
+        value = campaign_id(
+            [
+                ("baseline", "a" * 100, "a" * 40),
+                ("candidate", "b" * 100, "b" * 40),
+            ],
+            now=datetime(2026, 8, 6, 7, 37, 42, tzinfo=UTC),
+            nonce="9c42",
+        )
+
+        self.assertEqual(len(value), 68)
+        self.assertIn("a" * 12 + "-aaaaaaaa", value)
+        self.assertIn("b" * 12 + "-bbbbbbbb", value)
 
     def test_create_campaign_resolves_refs_and_shares_worktrees(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -172,7 +186,7 @@ class CampaignTests(unittest.TestCase):
                 return run_dir
 
             def fake_run(run_dir: Path, **kwargs: object) -> None:
-                suite_id = run_dir.parents[1].name
+                suite_id = manifest["suites"][int(run_dir.parents[1].name)]["id"]
                 listener = kwargs["event_listener"]
                 listener(
                     {
@@ -202,6 +216,9 @@ class CampaignTests(unittest.TestCase):
             )
             self.assertEqual(completed["status"], "completed_with_issues")
             self.assertEqual(len(created_runs), 3)
+            self.assertTrue(
+                all(run.parents[2].name == "_runs" for run in created_runs)
+            )
             summary = campaign_summary(completed)
             self.assertEqual(summary["counts"]["skipped"], 1)
             self.assertEqual(summary["counts"]["failed"], 1)
