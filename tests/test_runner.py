@@ -92,6 +92,35 @@ class RunnerTests(unittest.TestCase):
                 ],
             )
 
+    def test_execute_phase_rejects_unsuccessful_inspect_log(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            log_dir = root / "evals"
+            log_dir.mkdir()
+            sink = EventSink(root / "events.jsonl", "run-1", stream=io.StringIO())
+            phase = Phase(
+                id="fake-eval",
+                label="Fake evaluation",
+                command=(sys.executable, "-c", "pass"),
+                environment={},
+                progress_log_dir=log_dir,
+                expected_samples=1,
+            )
+
+            with patch(
+                "zhiyuan_bench.runner._validate_inspect_phase_log",
+                side_effect=RuntimeError("Inspect evaluation log is not complete: error"),
+            ):
+                return_code = execute_phase(
+                    phase, workspace=root, run_dir=root, sink=sink
+                )
+
+            self.assertEqual(return_code, 1)
+            self.assertIn(
+                "Inspect evaluation log is not complete: error",
+                (root / "logs" / "fake-eval.stderr.log").read_text(),
+            )
+
     def test_pending_phases_skip_only_successes(self) -> None:
         phases = [
             Phase("done", "Done", ("true",), {}),

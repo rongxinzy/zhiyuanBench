@@ -2,6 +2,7 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .zhiyuan-bench/
+.zhiyuan-bench.ui.local.json
 dist/
 build/
 *.egg-info/

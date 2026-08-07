@@ -63,6 +63,8 @@ Use `PYTHONPATH=src` when running directly from a checkout, or install the proje
 
 `campaign create` resolves every branch to a full SHA once, creates one shared isolated worktree per candidate, and persists a multi-suite record. Repeat `--suite` in the desired serial execution order. Add `--run` to execute immediately; otherwise use `campaign run` later to start or resume the record. Successful suites are never rerun. A missing dependency or unavailable service marks that suite as `skipped`, while an evaluation failure marks it as `failed`; both outcomes allow later suites to continue and can be retried by running the campaign again.
 
+Managed candidate worktrees automatically reuse the source checkout's exact lockfile-matched policy build and headless Pi runtime dependencies, so the lightweight campaign flow does not copy or install the full application dependency tree for every branch. The source checkout remains the single dependency owner, and campaign creation fails before launch if a required package version does not match the selected candidate.
+
 Campaign records use a UTC timestamp, source refs, short SHAs, and a collision-resistant suffix:
 
 ```text
@@ -71,6 +73,9 @@ records/
     campaign.json
     events.jsonl
     live-summary.json
+    report/
+      report.html
+      summary.json
     worktrees/
       baseline/
       candidate/
@@ -84,7 +89,7 @@ records/
             report/
 ```
 
-`campaign.json` is the authoritative resumable state, `events.jsonl` is append-only prompt-free history, and `live-summary.json` is an atomic compact view for dashboards. Suite run directories retain the existing raw logs, Inspect artifacts, validation output, and comparison reports. Benchmark prompts, targets, answers, and sample IDs are never copied into campaign progress files.
+`campaign.json` is the authoritative resumable state, `events.jsonl` is append-only prompt-free history, and `live-summary.json` is an atomic compact view for dashboards. `report/report.html` is a standalone, responsive summary that can be archived or opened without the Web application; `report/summary.json` retains the same prompt-free data for later analysis. Suite run directories retain the existing raw logs, Inspect artifacts, validation output, and comparison reports. Benchmark prompts, targets, answers, and sample IDs are never copied into campaign progress files.
 
 The local Web application is an optional install so the base runner remains dependency-free:
 
@@ -92,7 +97,17 @@ The local Web application is an optional install so the base runner remains depe
 python -m pip install "zhiyuan-bench[web]"
 ```
 
-`zhiyuan-bench ui` binds to `127.0.0.1:8765` by default. Its API lists the eight campaign suites and local Git branches, creates and resumes campaign records, and streams prompt-free progress through SSE. Web-triggered evaluation runs execute in a separate Python process and retain launcher stdout/stderr under the campaign record. The API refuses a second live runner and never terminates an existing process.
+`zhiyuan-bench ui` binds to `127.0.0.1:8765` by default. The responsive Chinese/English interface lists the eight campaign suites and local Git branches, keeps recent campaign records visible in the sidebar, creates and resumes campaign records, and streams prompt-free progress through SSE. It supports light and dark themes and links each record to its standalone report. Web-triggered evaluation runs execute in a separate Python process and retain launcher stdout/stderr under the campaign record. The API exposes prompt-free runtime readiness at `/api/readiness`, rejects an unready run before creating a campaign, refuses a second live runner, and never terminates an existing process.
+
+The interface uses vendored Pico CSS 2.1.1 for accessible form and table primitives, a small Zhiyuan semantic-token adapter, and inline Lucide icon paths. It has no frontend build step, CDN request, JavaScript framework, or runtime Node dependency.
+
+For one-command local development, copy `.zhiyuan-bench.ui.example.json` to the Git-ignored `.zhiyuan-bench.ui.local.json` once, then run:
+
+```powershell
+.\dev-ui.cmd
+```
+
+The launcher reads the persistent local profile, validates Python, the model endpoint, Docker, and the configured port, starts the UI from `src`, and opens the browser. Use `.\dev-ui.cmd -CheckOnly` to validate the profile without starting a server, or `-NoBrowser` to keep the browser closed. Frontend static files are served directly; refresh after CSS or JavaScript changes. Restart the launcher after Python changes.
 
 ## Runtime configuration
 

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
+import os
 import re
+import shutil
 import subprocess
 import uuid
 from datetime import UTC, datetime
@@ -11,6 +14,10 @@ from pathlib import Path
 from zhiyuan_bench.models import Candidate
 
 LABEL_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
+POLICY_WORKTREE_DEPENDENCIES = (
+    "esbuild",
+    "@earendil-works/pi-coding-agent",
+)
 
 
 def parse_branch(value: str) -> tuple[str, str]:
@@ -34,6 +41,86 @@ def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
         capture_output=True,
         text=True,
     )
+
+
+def _package_version(root: Path, package_name: str) -> str | None:
+    package_path = root.joinpath(*package_name.split("/"), "package.json")
+    if not package_path.is_file():
+        return None
+    value = json.loads(package_path.read_text(encoding="utf-8"))
+    version = value.get("version")
+    return version if isinstance(version, str) and version else None
+
+
+def _locked_package_version(root: Path, package_name: str) -> str | None:
+    lock_path = root / "package-lock.json"
+    if not lock_path.is_file():
+        return None
+    value = json.loads(lock_path.read_text(encoding="utf-8"))
+    package = value.get("packages", {}).get(f"node_modules/{package_name}", {})
+    version = package.get("version")
+    return version if isinstance(version, str) and version else None
+
+
+def _link_or_copy_directory(source: Path, target: Path) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        os.symlink(source, target, target_is_directory=True)
+    except OSError:
+        if os.name == "nt":
+            junction = subprocess.run(
+                ["cmd.exe", "/d", "/c", "mklink", "/J", str(target), str(source)],
+                capture_output=True,
+                text=True,
+            )
+            if junction.returncode == 0:
+                return
+        shutil.copytree(source, target)
+
+
+def _prepare_policy_build_dependencies(repo: Path, root: Path) -> None:
+    package_path = root / "package.json"
+    if not package_path.is_file():
+        return
+    package = json.loads(package_path.read_text(encoding="utf-8"))
+    scripts = package.get("scripts", {})
+    if not isinstance(scripts, dict) or "build:eval-policy" not in scripts:
+        return
+
+    source_modules = repo / "node_modules"
+    dependencies = list(POLICY_WORKTREE_DEPENDENCIES)
+    esbuild_package = source_modules / "esbuild" / "package.json"
+    if esbuild_package.is_file():
+        esbuild = json.loads(esbuild_package.read_text(encoding="utf-8"))
+        optional = esbuild.get("optionalDependencies", {})
+        if isinstance(optional, dict):
+            dependencies.extend(
+                name
+                for name in optional
+                if isinstance(name, str)
+                and source_modules.joinpath(*name.split("/")).is_dir()
+            )
+
+    for dependency in dependencies:
+        expected = _locked_package_version(root, dependency)
+        installed = _package_version(source_modules, dependency)
+        if expected is None:
+            raise RuntimeError(
+                f"Candidate lock file does not declare policy build dependency "
+                f"{dependency!r}: {root / 'package-lock.json'}"
+            )
+        if installed != expected:
+            raise RuntimeError(
+                f"Source checkout must provide {dependency}@{expected} for candidate "
+                f"policy builds; found {installed or 'nothing'} in {source_modules}"
+            )
+
+    target_modules = root / "node_modules"
+    target_modules.mkdir(exist_ok=True)
+    for dependency in dependencies:
+        source = source_modules.joinpath(*dependency.split("/"))
+        target = target_modules.joinpath(*dependency.split("/"))
+        _link_or_copy_directory(source, target)
 
 
 def resolve_revision(repo: Path, source_ref: str) -> str:
@@ -75,16 +162,16 @@ def create_branch_candidates(
             root = group / label
             root.parent.mkdir(parents=True, exist_ok=True)
             _git(repo, "worktree", "add", "--detach", str(root), revision)
-            candidates.append(
-                Candidate(
-                    label=label,
-                    root=root,
-                    revision=revision,
-                    source_ref=source_ref,
-                    source_repo=repo,
-                    managed_worktree=True,
-                )
+            candidate = Candidate(
+                label=label,
+                root=root,
+                revision=revision,
+                source_ref=source_ref,
+                source_repo=repo,
+                managed_worktree=True,
             )
+            candidates.append(candidate)
+            _prepare_policy_build_dependencies(repo, root)
     except BaseException:
         cleanup_worktrees(candidates)
         raise
@@ -143,16 +230,16 @@ def create_resolved_candidates(
             root = group / label
             root.parent.mkdir(parents=True, exist_ok=True)
             _git(repo, "worktree", "add", "--detach", str(root), revision)
-            candidates.append(
-                Candidate(
-                    label=label,
-                    root=root,
-                    revision=revision,
-                    source_ref=source_ref,
-                    source_repo=repo,
-                    managed_worktree=True,
-                )
+            candidate = Candidate(
+                label=label,
+                root=root,
+                revision=revision,
+                source_ref=source_ref,
+                source_repo=repo,
+                managed_worktree=True,
             )
+            candidates.append(candidate)
+            _prepare_policy_build_dependencies(repo, root)
     except BaseException:
         cleanup_worktrees(candidates)
         raise

@@ -63,6 +63,7 @@ class CampaignTests(unittest.TestCase):
                 suite_ids=["agentbench-os-dev", "bfcl-single-turn"],
                 workspace=root,
                 records_root=root / "records",
+                reviewer_required_candidates=set(),
             )
 
             manifest = read_campaign(campaign_dir)
@@ -85,6 +86,9 @@ class CampaignTests(unittest.TestCase):
             )
             self.assertTrue((campaign_dir / "live-summary.json").is_file())
             self.assertTrue((campaign_dir / "events.jsonl").is_file())
+            self.assertEqual(manifest["reviewer_required_candidates"], [])
+            self.assertTrue((campaign_dir / "report" / "report.html").is_file())
+            self.assertTrue((campaign_dir / "report" / "summary.json").is_file())
 
     def test_invalid_reviewer_label_does_not_create_worktrees(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

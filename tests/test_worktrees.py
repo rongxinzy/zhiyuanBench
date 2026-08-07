@@ -1,6 +1,7 @@
 import subprocess
 import tempfile
 import unittest
+from json import dumps
 from pathlib import Path
 
 from zhiyuan_bench.worktrees import (
@@ -64,6 +65,96 @@ class WorktreeTests(unittest.TestCase):
             cleanup_worktrees(candidates)
 
             self.assertTrue(all(not item.root.exists() for item in candidates))
+
+    def test_policy_build_dependencies_are_available_in_managed_worktree(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repo = root / "repo"
+            repo.mkdir()
+            _git(repo, "init")
+            _git(repo, "config", "user.name", "Test User")
+            _git(repo, "config", "user.email", "test@example.com")
+            (repo / ".gitignore").write_text("node_modules/\n", encoding="utf-8")
+            (repo / "package.json").write_text(
+                dumps(
+                    {
+                        "scripts": {
+                            "build:eval-policy": "node scripts/build-policy.mjs"
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (repo / "package-lock.json").write_text(
+                dumps(
+                    {
+                        "packages": {
+                            "node_modules/esbuild": {"version": "1.2.3"},
+                            "node_modules/@earendil-works/pi-coding-agent": {
+                                "version": "4.5.6"
+                            },
+                            "node_modules/@esbuild/test-platform": {
+                                "version": "1.2.3"
+                            },
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            esbuild = repo / "node_modules" / "esbuild"
+            pi_agent = (
+                repo
+                / "node_modules"
+                / "@earendil-works"
+                / "pi-coding-agent"
+            )
+            platform = repo / "node_modules" / "@esbuild" / "test-platform"
+            esbuild.mkdir(parents=True)
+            pi_agent.mkdir(parents=True)
+            platform.mkdir(parents=True)
+            (esbuild / "package.json").write_text(
+                dumps(
+                    {
+                        "version": "1.2.3",
+                        "optionalDependencies": {
+                            "@esbuild/test-platform": "1.2.3"
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (platform / "package.json").write_text(
+                dumps({"version": "1.2.3"}), encoding="utf-8"
+            )
+            (pi_agent / "package.json").write_text(
+                dumps({"version": "4.5.6"}), encoding="utf-8"
+            )
+            _git(repo, "add", ".gitignore", "package.json", "package-lock.json")
+            _git(repo, "commit", "-m", "policy build")
+
+            candidates = create_branch_candidates(
+                repo, ["candidate=HEAD"], root / "output"
+            )
+
+            candidate_modules = candidates[0].root / "node_modules"
+            self.assertTrue((candidate_modules / "esbuild" / "package.json").is_file())
+            self.assertTrue(
+                (
+                    candidate_modules
+                    / "@esbuild"
+                    / "test-platform"
+                    / "package.json"
+                ).is_file()
+            )
+            self.assertTrue(
+                (
+                    candidate_modules
+                    / "@earendil-works"
+                    / "pi-coding-agent"
+                    / "package.json"
+                ).is_file()
+            )
+            cleanup_worktrees(candidates)
 
 
 if __name__ == "__main__":

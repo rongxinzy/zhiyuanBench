@@ -595,6 +595,46 @@ def _inspect_journal_completed(
         return None
 
 
+def _read_inspect_log(path: Path) -> Any:
+    try:
+        from inspect_ai.log import read_eval_log
+    except ImportError as error:
+        raise RuntimeError(
+            "Inspect is required to validate evaluation log completion"
+        ) from error
+    return read_eval_log(str(path), header_only=True)
+
+
+def _validate_inspect_phase_log(
+    phase: Phase, *, exclude: frozenset[Path]
+) -> None:
+    log_dir = phase.progress_log_dir
+    if log_dir is None or not log_dir.is_dir():
+        raise RuntimeError("Inspect phase did not create its evaluation log directory")
+    logs = [path for path in log_dir.glob("*.eval") if path not in exclude]
+    if len(logs) != 1:
+        raise RuntimeError(
+            f"Inspect phase must create exactly one evaluation log; found {len(logs)}"
+        )
+    log = _read_inspect_log(logs[0])
+    if getattr(log, "status", None) != "success":
+        raise RuntimeError(
+            f"Inspect evaluation log is not complete: {getattr(log, 'status', 'unknown')}"
+        )
+    results = getattr(log, "results", None)
+    completed = getattr(results, "completed_samples", None)
+    total = getattr(results, "total_samples", None)
+    if results is None or not isinstance(completed, int) or not isinstance(total, int):
+        raise RuntimeError("Inspect evaluation log has no aggregate completion result")
+    if phase.expected_samples is not None and (
+        completed != phase.expected_samples or total != phase.expected_samples
+    ):
+        raise RuntimeError(
+            "Inspect evaluation sample count mismatch: "
+            f"expected {phase.expected_samples}, completed {completed} of {total}"
+        )
+
+
 def _progress_advanced(
     current: tuple[int, int] | None, observed: tuple[int, int]
 ) -> bool:
@@ -724,6 +764,13 @@ def execute_phase(
             process.stdout.close()
             process.stderr.close()
     return_code = process.wait()
+    if return_code == 0 and phase.progress_log_dir is not None:
+        try:
+            _validate_inspect_phase_log(phase, exclude=existing_progress_logs)
+        except RuntimeError as error:
+            with stderr_path.open("a", encoding="utf-8", newline="\n") as stderr_file:
+                stderr_file.write(f"[zhiyuan-bench] {error}\n")
+            return_code = 1
     sink.emit(
         "phase_finished",
         phase=phase.id,
@@ -761,7 +808,11 @@ def create_run(
             f"{suite.max_candidates or 'many'} candidates"
         )
     candidate_labels = {candidate.label for candidate in candidates}
-    reviewer_required = reviewer_required_candidates or candidate_labels
+    reviewer_required = (
+        candidate_labels
+        if reviewer_required_candidates is None
+        else reviewer_required_candidates
+    )
     unknown_reviewer_labels = reviewer_required - candidate_labels
     if unknown_reviewer_labels:
         raise ValueError(

@@ -38,6 +38,22 @@ class ConflictLauncher(FakeLauncher):
 @unittest.skipIf(TestClient is None, "web optional dependencies are not installed")
 class WebTests(unittest.TestCase):
     def setUp(self) -> None:
+        self.environment = patch.dict(
+            os.environ,
+            {
+                "ZHIYUAN_MODEL_BASE_URL": "http://model.test/v1",
+                "ZHIYUAN_MODEL_ID": "gemma-test",
+            },
+        )
+        self.environment.start()
+        self.services = patch(
+            "zhiyuan_bench.web._service_readiness",
+            return_value={
+                "model_api": {"ready": True, "reason": "ready"},
+                "docker": {"ready": True, "reason": "ready"},
+            },
+        )
+        self.services.start()
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name)
         self.repo = self.root / "repo"
@@ -66,6 +82,8 @@ class WebTests(unittest.TestCase):
         self.client = TestClient(create_app(self.config, launcher=self.launcher))
 
     def tearDown(self) -> None:
+        self.services.stop()
+        self.environment.stop()
         self.temporary.cleanup()
 
     def _campaign(
@@ -101,6 +119,9 @@ class WebTests(unittest.TestCase):
         return path
 
     def test_health_suites_and_local_branches(self) -> None:
+        index = self.client.get("/")
+        self.assertEqual(index.status_code, 200)
+        self.assertIn("知远评测", index.text)
         self.assertEqual(self.client.get("/api/health").json()["status"], "ok")
         suites = self.client.get("/api/suites").json()
         self.assertEqual(len(suites), 8)
@@ -108,6 +129,45 @@ class WebTests(unittest.TestCase):
         branches = self.client.get("/api/branches").json()
         self.assertEqual(len(branches), 1)
         self.assertEqual(len(branches[0]["revision"]), 40)
+
+    def test_readiness_reports_missing_configuration_without_values(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"ZHIYUAN_MODEL_BASE_URL": "", "ZHIYUAN_MODEL_ID": ""},
+        ):
+            readiness = self.client.get("/api/readiness").json()
+
+        self.assertFalse(readiness["ready"])
+        self.assertEqual(
+            readiness["missing_environment"],
+            ["ZHIYUAN_MODEL_BASE_URL", "ZHIYUAN_MODEL_ID"],
+        )
+        self.assertNotIn("http://model.test/v1", json.dumps(readiness))
+        self.assertEqual(len(readiness["suites"]), 8)
+
+    def test_readiness_reports_unreachable_services_without_details(self) -> None:
+        self.services.stop()
+        try:
+            with (
+                patch("zhiyuan_bench.web.urllib.request.urlopen", side_effect=OSError),
+                patch("zhiyuan_bench.web.subprocess.run") as run,
+                patch.dict(os.environ, {"DOCKER_HOST": "ssh://docker.test"}),
+            ):
+                run.return_value.returncode = 1
+                readiness = self.client.get("/api/readiness").json()
+        finally:
+            self.services.start()
+
+        self.assertFalse(readiness["ready"])
+        self.assertFalse(readiness["suites"][0]["ready"])
+        self.assertEqual(
+            readiness["services"],
+            {
+                "model_api": {"ready": False, "reason": "unreachable"},
+                "docker": {"ready": False, "reason": "unreachable"},
+            },
+        )
+        self.assertNotIn("172.18", json.dumps(readiness))
 
     def test_lists_and_reads_campaign_records(self) -> None:
         path = self._campaign()
@@ -118,9 +178,46 @@ class WebTests(unittest.TestCase):
         self.assertEqual(detail.status_code, 200)
         self.assertEqual(detail.json()["counts"]["created"], 1)
 
+    def test_listing_preserves_multiple_campaign_records(self) -> None:
+        older = self._campaign("20260806T000000Z__main-aaaaaaaa__older")
+        newer = self._campaign("20260806T010000Z__main-aaaaaaaa__newer")
+
+        listing = self.client.get("/api/campaigns").json()
+
+        self.assertEqual(
+            [item["campaign_id"] for item in listing],
+            [newer.name, older.name],
+        )
+
     def test_create_campaign_and_launch(self) -> None:
         path = self._campaign("created-campaign")
         with patch("zhiyuan_bench.web.create_campaign", return_value=path) as create:
+            response = self.client.post(
+                "/api/campaigns",
+                json={
+                    "branches": [{"label": "candidate", "ref": "main"}],
+                    "suites": ["bfcl-single-turn"],
+                    "reviewer_required_candidates": [],
+                    "run": True,
+                },
+            )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json()["runner"]["pid"], 1234)
+        create.assert_called_once()
+        self.assertEqual(create.call_args.kwargs["reviewer_required_candidates"], set())
+        self.assertEqual(
+            [item.resolve() for item in self.launcher.launched], [path.resolve()]
+        )
+
+    def test_create_run_rejects_unready_runtime_before_saving_campaign(self) -> None:
+        with (
+            patch.dict(
+                os.environ,
+                {"ZHIYUAN_MODEL_BASE_URL": "", "ZHIYUAN_MODEL_ID": ""},
+            ),
+            patch("zhiyuan_bench.web.create_campaign") as create,
+        ):
             response = self.client.post(
                 "/api/campaigns",
                 json={
@@ -130,12 +227,31 @@ class WebTests(unittest.TestCase):
                 },
             )
 
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("ZHIYUAN_MODEL_BASE_URL", response.json()["error"])
+        create.assert_not_called()
+        self.assertEqual(self.client.get("/api/campaigns").json(), [])
+
+    def test_create_without_run_allows_unready_runtime(self) -> None:
+        path = self._campaign("saved-campaign")
+        with (
+            patch.dict(
+                os.environ,
+                {"ZHIYUAN_MODEL_BASE_URL": "", "ZHIYUAN_MODEL_ID": ""},
+            ),
+            patch("zhiyuan_bench.web.create_campaign", return_value=path) as create,
+        ):
+            response = self.client.post(
+                "/api/campaigns",
+                json={
+                    "branches": [{"label": "candidate", "ref": "main"}],
+                    "suites": ["bfcl-single-turn"],
+                    "run": False,
+                },
+            )
+
         self.assertEqual(response.status_code, 201)
-        self.assertEqual(response.json()["runner"]["pid"], 1234)
         create.assert_called_once()
-        self.assertEqual(
-            [item.resolve() for item in self.launcher.launched], [path.resolve()]
-        )
 
     def test_create_returns_saved_campaign_when_launch_conflicts(self) -> None:
         path = self._campaign("created-campaign")
@@ -160,6 +276,17 @@ class WebTests(unittest.TestCase):
         self.assertEqual(
             [item.resolve() for item in self.launcher.launched], [path.resolve()]
         )
+
+    def test_run_existing_campaign_rejects_unready_runtime(self) -> None:
+        path = self._campaign()
+        with patch.dict(
+            os.environ,
+            {"ZHIYUAN_MODEL_BASE_URL": "", "ZHIYUAN_MODEL_ID": ""},
+        ):
+            response = self.client.post(f"/api/campaigns/{path.name}/run")
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(self.launcher.launched, [])
 
     def test_launcher_refuses_existing_campaign_lock(self) -> None:
         path = self._campaign()
@@ -205,6 +332,15 @@ class WebTests(unittest.TestCase):
         )
         self.assertIn("event: campaign_created", response.text)
         self.assertIn('"sequence": 1', response.text)
+
+    def test_serves_standalone_campaign_report(self) -> None:
+        path = self._campaign()
+
+        response = self.client.get(f"/api/campaigns/{path.name}/report")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["content-type"].split(";")[0], "text/html")
+        self.assertIn(path.name, response.text)
 
 
 if __name__ == "__main__":

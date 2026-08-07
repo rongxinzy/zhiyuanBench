@@ -105,6 +105,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     ui.add_argument("--host", default="127.0.0.1")
     ui.add_argument("--port", type=int, default=8765)
+    ui.add_argument("--open-browser", action="store_true")
     return parser
 
 
@@ -163,6 +164,7 @@ def main(argv: list[str] | None = None) -> int:
                 ),
                 host=args.host,
                 port=args.port,
+                open_browser=args.open_browser,
             )
             return 0
         if args.command in {"run", "compare"}:
