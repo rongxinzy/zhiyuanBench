@@ -101,8 +101,49 @@ class CampaignTests(unittest.TestCase):
             self.assertTrue((campaign_dir / "live-summary.json").is_file())
             self.assertTrue((campaign_dir / "events.jsonl").is_file())
             self.assertEqual(manifest["reviewer_required_candidates"], [])
+            self.assertEqual(manifest["suites"][0]["progress"], {"completed": 0, "total": 52})
+            self.assertEqual(
+                manifest["suites"][1]["progress"],
+                {"completed": 0, "total": 7962},
+            )
             self.assertTrue((campaign_dir / "report" / "report.html").is_file())
             self.assertTrue((campaign_dir / "report" / "summary.json").is_file())
+
+    def test_summary_translates_legacy_phase_progress_to_campaign_progress(self) -> None:
+        manifest = {
+            "schema_version": 1,
+            "campaign_id": "legacy",
+            "status": "running",
+            "created_at": "2026-08-07T00:00:00+00:00",
+            "limit": None,
+            "candidates": [
+                {"label": "baseline", "source_ref": "main", "revision": "a" * 40},
+                {
+                    "label": "candidate",
+                    "source_ref": "feature",
+                    "revision": "b" * 40,
+                },
+            ],
+            "suites": [
+                {
+                    "id": "agentbench-os-dev",
+                    "bridge": "headless-pi-production",
+                    "status": "running",
+                    "phase": "eval-baseline",
+                    "progress": {"completed": 4, "total": 26},
+                }
+            ],
+        }
+
+        summary = campaign_summary(manifest)
+
+        self.assertEqual(
+            summary["suites"][0]["progress"], {"completed": 4, "total": 52}
+        )
+        self.assertEqual(
+            summary["suites"][0]["phase_progress"],
+            {"completed": 4, "total": 26},
+        )
 
     def test_invalid_reviewer_label_does_not_create_worktrees(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -188,14 +229,15 @@ class CampaignTests(unittest.TestCase):
             def fake_run(run_dir: Path, **kwargs: object) -> None:
                 suite_id = manifest["suites"][int(run_dir.parents[1].name)]["id"]
                 listener = kwargs["event_listener"]
-                listener(
-                    {
-                        "event_type": "phase_progress",
-                        "phase": "eval",
-                        "status": "running",
-                        "details": {"completed": 1, "total": 2},
-                    }
-                )
+                for phase in ("eval-baseline", "eval-candidate"):
+                    listener(
+                        {
+                            "event_type": "phase_progress",
+                            "phase": phase,
+                            "status": "running",
+                            "details": {"completed": 1, "total": 1},
+                        }
+                    )
                 if suite_id == "agentbench-os-dev":
                     raise SuiteUnavailableError("Docker unavailable")
                 if suite_id == "codeipi":
@@ -223,6 +265,18 @@ class CampaignTests(unittest.TestCase):
             self.assertEqual(summary["counts"]["skipped"], 1)
             self.assertEqual(summary["counts"]["failed"], 1)
             self.assertEqual(summary["counts"]["succeeded"], 1)
+            self.assertTrue(
+                all(
+                    suite["progress"] == {"completed": 2, "total": 2}
+                    for suite in completed["suites"]
+                )
+            )
+            self.assertTrue(
+                all(
+                    suite["phase_progress"] == {"completed": 1, "total": 1}
+                    for suite in completed["suites"]
+                )
+            )
 
     def test_resume_reuses_run_and_skips_successful_suite(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

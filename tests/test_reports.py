@@ -25,6 +25,8 @@ class ReportTests(unittest.TestCase):
                     "bridge": "headless-pi-production",
                     "status": "failed",
                     "progress": {"completed": 8, "total": 26},
+                    "phase": "preflight-candidate",
+                    "phase_progress": {"completed": 1, "total": 1},
                     "failure": {"message": "bridge timeout"},
                 }
             ],
@@ -35,6 +37,8 @@ class ReportTests(unittest.TestCase):
         self.assertIn("campaign-&lt;unsafe&gt;", report)
         self.assertNotIn("<script>", report)
         self.assertIn('value="8" max="26"', report)
+        self.assertIn("8/26", report)
+        self.assertIn("preflight-candidate · 1/1", report)
         self.assertIn("bridge timeout", report)
 
     def test_writes_standalone_html_and_json(self) -> None:
