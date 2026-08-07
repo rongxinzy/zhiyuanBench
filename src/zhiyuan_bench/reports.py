@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import html
 import json
-import os
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from zhiyuan_bench.persistence import atomic_write_text
 
 
 def _escape(value: object) -> str:
@@ -98,6 +99,4 @@ def write_campaign_report(campaign_dir: Path, summary: dict[str, Any]) -> None:
         + "\n",
     }
     for path, content in files.items():
-        temporary = path.with_suffix(f".tmp-{os.getpid()}")
-        temporary.write_text(content, encoding="utf-8", newline="\n")
-        os.replace(temporary, path)
+        atomic_write_text(path, content)

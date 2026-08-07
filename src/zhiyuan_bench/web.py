@@ -30,6 +30,7 @@ from zhiyuan_bench.campaigns import (
     read_campaign,
 )
 from zhiyuan_bench.locking import RunLock
+from zhiyuan_bench.persistence import atomic_write_text
 from zhiyuan_bench.registry import select_bridge, suite_by_id
 from zhiyuan_bench.worktrees import list_local_branches
 
@@ -76,14 +77,10 @@ def _process_alive(pid: int) -> bool:
 
 
 def _write_json(path: Path, value: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(f".tmp-{os.getpid()}")
-    temporary.write_text(
+    atomic_write_text(
+        path,
         json.dumps(value, ensure_ascii=True, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-        newline="\n",
     )
-    os.replace(temporary, path)
 
 
 class CampaignLauncher:

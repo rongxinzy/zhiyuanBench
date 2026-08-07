@@ -17,6 +17,7 @@ LABEL_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
 POLICY_WORKTREE_DEPENDENCIES = (
     "esbuild",
     "@earendil-works/pi-coding-agent",
+    "typebox",
 )
 
 

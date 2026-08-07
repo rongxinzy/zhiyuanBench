@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 from typing import Any
+
+from zhiyuan_bench.persistence import atomic_write_text
 
 
 def read_manifest(run_dir: Path) -> dict[str, Any]:
@@ -18,11 +19,7 @@ def read_manifest(run_dir: Path) -> dict[str, Any]:
 
 def write_manifest(run_dir: Path, manifest: dict[str, Any]) -> None:
     run_dir.mkdir(parents=True, exist_ok=True)
-    path = run_dir / "manifest.json"
-    temporary = path.with_suffix(f".tmp-{os.getpid()}")
-    temporary.write_text(
+    atomic_write_text(
+        run_dir / "manifest.json",
         json.dumps(manifest, indent=2, ensure_ascii=True, sort_keys=True) + "\n",
-        encoding="utf-8",
-        newline="\n",
     )
-    os.replace(temporary, path)

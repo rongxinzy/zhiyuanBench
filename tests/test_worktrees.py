@@ -93,6 +93,7 @@ class WorktreeTests(unittest.TestCase):
                             "node_modules/@earendil-works/pi-coding-agent": {
                                 "version": "4.5.6"
                             },
+                            "node_modules/typebox": {"version": "7.8.9"},
                             "node_modules/@esbuild/test-platform": {
                                 "version": "1.2.3"
                             },
@@ -109,9 +110,11 @@ class WorktreeTests(unittest.TestCase):
                 / "pi-coding-agent"
             )
             platform = repo / "node_modules" / "@esbuild" / "test-platform"
+            typebox = repo / "node_modules" / "typebox"
             esbuild.mkdir(parents=True)
             pi_agent.mkdir(parents=True)
             platform.mkdir(parents=True)
+            typebox.mkdir(parents=True)
             (esbuild / "package.json").write_text(
                 dumps(
                     {
@@ -128,6 +131,9 @@ class WorktreeTests(unittest.TestCase):
             )
             (pi_agent / "package.json").write_text(
                 dumps({"version": "4.5.6"}), encoding="utf-8"
+            )
+            (typebox / "package.json").write_text(
+                dumps({"version": "7.8.9"}), encoding="utf-8"
             )
             _git(repo, "add", ".gitignore", "package.json", "package-lock.json")
             _git(repo, "commit", "-m", "policy build")
@@ -154,6 +160,7 @@ class WorktreeTests(unittest.TestCase):
                     / "package.json"
                 ).is_file()
             )
+            self.assertTrue((candidate_modules / "typebox" / "package.json").is_file())
             cleanup_worktrees(candidates)
 
 
