@@ -36,6 +36,9 @@ class CliTests(unittest.TestCase):
         self.assertEqual(timer.call_args.kwargs["args"], ("http://127.0.0.1:9876/",))
         timer.return_value.start.assert_called_once_with()
         uvicorn.run.assert_called_once()
+        self.assertEqual(
+            uvicorn.run.call_args.kwargs["timeout_graceful_shutdown"], 3
+        )
 
 
 if __name__ == "__main__":

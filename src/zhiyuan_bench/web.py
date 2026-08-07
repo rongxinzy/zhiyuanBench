@@ -38,6 +38,9 @@ MODEL_REQUIRED_ENVIRONMENT = (
     "ZHIYUAN_MODEL_BASE_URL",
     "ZHIYUAN_MODEL_ID",
 )
+TERMINAL_CAMPAIGN_STATUSES = frozenset(
+    {"succeeded", "completed_with_issues", "cancelled"}
+)
 
 
 @dataclass(frozen=True)
@@ -121,8 +124,10 @@ class CampaignLauncher:
             except (OSError, TypeError, ValueError):
                 previous_pid = -1
                 campaign_status = "unknown"
-            terminal = {"succeeded", "completed_with_issues", "cancelled"}
-            if _process_alive(previous_pid) and campaign_status not in terminal:
+            if (
+                _process_alive(previous_pid)
+                and campaign_status not in TERMINAL_CAMPAIGN_STATUSES
+            ):
                 raise CampaignConflictError(
                     f"Campaign runner is already active with PID {previous_pid}"
                 )
@@ -555,22 +560,31 @@ def create_app(
         async def stream() -> Any:
             sequence = after
             idle_ticks = 0
-            while True:
-                events = await run_in_threadpool(
-                    _read_events, path / "events.jsonl", sequence
-                )
-                for event in events:
-                    sequence = max(sequence, int(event["sequence"]))
-                    yield _sse(event)
-                if not follow:
-                    return
-                if await request.is_disconnected():
-                    return
-                idle_ticks += 1
-                if idle_ticks >= 30:
-                    yield ": keep-alive\n\n"
-                    idle_ticks = 0
-                await asyncio.sleep(0.5)
+            try:
+                while True:
+                    events = await run_in_threadpool(
+                        _read_events, path / "events.jsonl", sequence
+                    )
+                    for event in events:
+                        sequence = max(sequence, int(event["sequence"]))
+                        yield _sse(event)
+                    if not follow:
+                        return
+                    try:
+                        campaign = await run_in_threadpool(read_campaign, path)
+                    except (OSError, ValueError):
+                        campaign = {}
+                    if campaign.get("status") in TERMINAL_CAMPAIGN_STATUSES:
+                        return
+                    if await request.is_disconnected():
+                        return
+                    idle_ticks += 1
+                    if idle_ticks >= 30:
+                        yield ": keep-alive\n\n"
+                        idle_ticks = 0
+                    await asyncio.sleep(0.5)
+            except asyncio.CancelledError:
+                return
 
         return StreamingResponse(
             stream(),
@@ -618,4 +632,10 @@ def run_web_server(
         )
         browser_timer.daemon = True
         browser_timer.start()
-    uvicorn.run(create_app(config), host=host, port=port, log_level="info")
+    uvicorn.run(
+        create_app(config),
+        host=host,
+        port=port,
+        log_level="info",
+        timeout_graceful_shutdown=3,
+    )
