@@ -46,6 +46,14 @@ class WebTests(unittest.TestCase):
             },
         )
         self.environment.start()
+        self.services = patch(
+            "zhiyuan_bench.web._service_readiness",
+            return_value={
+                "model_api": {"ready": True, "reason": "ready"},
+                "docker": {"ready": True, "reason": "ready"},
+            },
+        )
+        self.services.start()
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name)
         self.repo = self.root / "repo"
@@ -74,6 +82,7 @@ class WebTests(unittest.TestCase):
         self.client = TestClient(create_app(self.config, launcher=self.launcher))
 
     def tearDown(self) -> None:
+        self.services.stop()
         self.environment.stop()
         self.temporary.cleanup()
 
@@ -135,6 +144,30 @@ class WebTests(unittest.TestCase):
         )
         self.assertNotIn("http://model.test/v1", json.dumps(readiness))
         self.assertEqual(len(readiness["suites"]), 8)
+
+    def test_readiness_reports_unreachable_services_without_details(self) -> None:
+        self.services.stop()
+        try:
+            with (
+                patch("zhiyuan_bench.web.urllib.request.urlopen", side_effect=OSError),
+                patch("zhiyuan_bench.web.subprocess.run") as run,
+                patch.dict(os.environ, {"DOCKER_HOST": "ssh://docker.test"}),
+            ):
+                run.return_value.returncode = 1
+                readiness = self.client.get("/api/readiness").json()
+        finally:
+            self.services.start()
+
+        self.assertFalse(readiness["ready"])
+        self.assertFalse(readiness["suites"][0]["ready"])
+        self.assertEqual(
+            readiness["services"],
+            {
+                "model_api": {"ready": False, "reason": "unreachable"},
+                "docker": {"ready": False, "reason": "unreachable"},
+            },
+        )
+        self.assertNotIn("172.18", json.dumps(readiness))
 
     def test_lists_and_reads_campaign_records(self) -> None:
         path = self._campaign()

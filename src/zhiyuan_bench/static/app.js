@@ -213,6 +213,7 @@ function suiteReadinessReason(readiness) {
   if (readiness.missing_environment?.length) reasons.push(readiness.missing_environment.join(", "));
   if (readiness.missing_python_modules?.length) reasons.push(readiness.missing_python_modules.join(", "));
   if (readiness.platform_supported === false) reasons.push(readiness.required_host_platforms.join(" / "));
+  if (readiness.unavailable_services?.length) reasons.push(readiness.unavailable_services.join(", "));
   return reasons.join(" · ") || t("runtimeUnavailable");
 }
 

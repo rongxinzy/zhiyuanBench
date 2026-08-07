@@ -99,6 +99,14 @@ python -m pip install "zhiyuan-bench[web]"
 
 The interface uses vendored Pico CSS 2.1.1 for accessible form and table primitives, a small Zhiyuan semantic-token adapter, and inline Lucide icon paths. It has no frontend build step, CDN request, JavaScript framework, or runtime Node dependency.
 
+For one-command local development, copy `.zhiyuan-bench.ui.example.json` to the Git-ignored `.zhiyuan-bench.ui.local.json` once, then run:
+
+```powershell
+.\dev-ui.cmd
+```
+
+The launcher reads the persistent local profile, validates Python, the model endpoint, Docker, and the configured port, starts the UI from `src`, and opens the browser. Use `.\dev-ui.cmd -CheckOnly` to validate the profile without starting a server, or `-NoBrowser` to keep the browser closed. Frontend static files are served directly; refresh after CSS or JavaScript changes. Restart the launcher after Python changes.
+
 ## Runtime configuration
 
 Model and infrastructure configuration is read from environment variables so API keys never enter command history or the run manifest.

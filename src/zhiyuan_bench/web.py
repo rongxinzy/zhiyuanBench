@@ -8,6 +8,9 @@ import json
 import os
 import subprocess
 import sys
+import threading
+import urllib.request
+import webbrowser
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -202,7 +205,55 @@ def _suite_payload() -> list[dict[str, Any]]:
     return result
 
 
-def _suite_readiness(suite_id: str) -> dict[str, Any]:
+def _service_readiness(suite_ids: tuple[str, ...] | list[str]) -> dict[str, Any]:
+    model_ready = False
+    model_reason = "not_configured"
+    base_url = os.environ.get("ZHIYUAN_MODEL_BASE_URL", "").rstrip("/")
+    if base_url and os.environ.get("ZHIYUAN_MODEL_ID"):
+        try:
+            with urllib.request.urlopen(f"{base_url}/models", timeout=5) as response:
+                model_ready = response.status == 200
+                model_reason = "ready" if model_ready else "unhealthy"
+        except (OSError, ValueError):
+            model_reason = "unreachable"
+
+    needs_docker = any(
+        "sandbox" in suite_by_id(suite_id).required_capabilities
+        for suite_id in suite_ids
+    )
+    docker_ready = not needs_docker
+    docker_reason = "not_required" if not needs_docker else "not_configured"
+    docker_host = os.environ.get("DOCKER_HOST")
+    if needs_docker and docker_host:
+        try:
+            result = subprocess.run(
+                [
+                    "docker",
+                    "-H",
+                    docker_host,
+                    "info",
+                    "--format",
+                    "{{.ServerVersion}}",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            docker_ready = result.returncode == 0
+            docker_reason = "ready" if docker_ready else "unreachable"
+        except (OSError, subprocess.SubprocessError):
+            docker_reason = "unreachable"
+
+    return {
+        "model_api": {"ready": model_ready, "reason": model_reason},
+        "docker": {"ready": docker_ready, "reason": docker_reason},
+    }
+
+
+def _suite_readiness(
+    suite_id: str, services: dict[str, dict[str, Any]]
+) -> dict[str, Any]:
     suite = suite_by_id(suite_id)
     required_environment = list(MODEL_REQUIRED_ENVIRONMENT)
     required_environment.extend(suite.required_environment)
@@ -220,29 +271,41 @@ def _suite_readiness(suite_id: str) -> dict[str, Any]:
         sys.platform.startswith(platform)
         for platform in suite.required_host_platforms
     )
+    unavailable_services = []
+    if not services["model_api"]["ready"]:
+        unavailable_services.append("model_api")
+    if (
+        "sandbox" in suite.required_capabilities
+        and not services["docker"]["ready"]
+    ):
+        unavailable_services.append("docker")
     return {
         "id": suite.id,
         "ready": not missing_environment
         and not missing_modules
-        and platform_supported,
+        and platform_supported
+        and not unavailable_services,
         "missing_environment": missing_environment,
         "missing_python_modules": missing_modules,
         "platform_supported": platform_supported,
         "required_host_platforms": list(suite.required_host_platforms),
+        "unavailable_services": unavailable_services,
     }
 
 
 def _readiness(
     suite_ids: tuple[str, ...] | list[str] = CAMPAIGN_SUITES,
 ) -> dict[str, Any]:
-    suites = [_suite_readiness(suite_id) for suite_id in suite_ids]
+    services = _service_readiness(suite_ids)
+    suites = [_suite_readiness(suite_id, services) for suite_id in suite_ids]
     missing_model_environment = [
         name for name in MODEL_REQUIRED_ENVIRONMENT if not os.environ.get(name)
     ]
     return {
         "schema_version": 1,
-        "ready": not missing_model_environment,
+        "ready": all(suite["ready"] for suite in suites),
         "missing_environment": missing_model_environment,
+        "services": services,
         "suites": suites,
     }
 
@@ -265,6 +328,10 @@ def _unavailable_message(readiness: dict[str, Any]) -> str:
             reasons.append(
                 "requires host platform "
                 + " or ".join(suite["required_host_platforms"])
+            )
+        if suite["unavailable_services"]:
+            reasons.append(
+                "unavailable services " + ", ".join(suite["unavailable_services"])
             )
         details.append(f"{suite['id']}: {'; '.join(reasons)}")
     return "Selected suites are not ready: " + " | ".join(details)
@@ -358,7 +425,7 @@ def create_app(
         return JSONResponse({"status": "ok", "schema_version": 1})
 
     async def readiness(_request: Request) -> Response:
-        return JSONResponse(_readiness())
+        return JSONResponse(await run_in_threadpool(_readiness))
 
     async def configuration(_request: Request) -> Response:
         return JSONResponse(
@@ -395,7 +462,9 @@ def create_app(
             payload = _parse_create_payload(await request.json())
             should_run = payload.pop("run")
             if should_run:
-                run_readiness = _readiness(payload["suite_ids"])
+                run_readiness = await run_in_threadpool(
+                    _readiness, payload["suite_ids"]
+                )
                 if any(not suite["ready"] for suite in run_readiness["suites"]):
                     return JSONResponse(
                         {
@@ -437,7 +506,7 @@ def create_app(
             path = _campaign_dir(config, request.path_params["campaign_id"])
             campaign = read_campaign(path)
             suite_ids = [str(item["id"]) for item in campaign["suites"]]
-            run_readiness = _readiness(suite_ids)
+            run_readiness = await run_in_threadpool(_readiness, suite_ids)
             if any(not suite["ready"] for suite in run_readiness["suites"]):
                 return JSONResponse(
                     {
@@ -530,7 +599,11 @@ def create_app(
 
 
 def run_web_server(
-    config: WebConfig, *, host: str = "127.0.0.1", port: int = 8765
+    config: WebConfig,
+    *,
+    host: str = "127.0.0.1",
+    port: int = 8765,
+    open_browser: bool = False,
 ) -> None:
     try:
         import uvicorn
@@ -538,4 +611,11 @@ def run_web_server(
         raise RuntimeError(
             "Web dependencies are missing; install zhiyuan-bench[web]"
         ) from error
+    if open_browser:
+        browser_host = "127.0.0.1" if host in {"0.0.0.0", "::"} else host
+        browser_timer = threading.Timer(
+            0.75, webbrowser.open, args=(f"http://{browser_host}:{port}/",)
+        )
+        browser_timer.daemon = True
+        browser_timer.start()
     uvicorn.run(create_app(config), host=host, port=port, log_level="info")
