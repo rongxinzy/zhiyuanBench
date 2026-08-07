@@ -174,7 +174,7 @@ SUITES = (
         required_capabilities=frozenset(
             {"inspect", "model_api", "tool_capture", "progress_events", "run_limits"}
         ),
-        expected_samples=None,
+        expected_samples=3981,
         task="tools/zhiyuan/baseline.py@zhiyuan_bfcl",
     ),
     *(

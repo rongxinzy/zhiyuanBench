@@ -63,6 +63,8 @@ Use `PYTHONPATH=src` when running directly from a checkout, or install the proje
 
 `campaign create` resolves every branch to a full SHA once, creates one shared isolated worktree per candidate, and persists a multi-suite record. Repeat `--suite` in the desired serial execution order. Add `--run` to execute immediately; otherwise use `campaign run` later to start or resume the record. Successful suites are never rerun. A missing dependency or unavailable service marks that suite as `skipped`, while an evaluation failure marks it as `failed`; both outcomes allow later suites to continue and can be retried by running the campaign again.
 
+Managed candidate worktrees automatically reuse the source checkout's exact lockfile-matched policy build and headless Pi runtime dependencies, so the lightweight campaign flow does not copy or install the full application dependency tree for every branch. The source checkout remains the single dependency owner, and campaign creation fails before launch if a required package version does not match the selected candidate.
+
 Campaign records use a UTC timestamp, source refs, short SHAs, and a collision-resistant suffix:
 
 ```text

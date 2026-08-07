@@ -49,12 +49,17 @@ def render_campaign_report(summary: dict[str, Any]) -> str:
     )
     rows = "".join(_suite_row(suite) for suite in summary.get("suites", []))
     generated = datetime.now(UTC).isoformat()
+    auto_refresh = (
+        '  <meta http-equiv="refresh" content="3">\n'
+        if summary.get("status") in {"created", "running"}
+        else ""
+    )
     return f"""<!doctype html>
 <html lang="zh-CN" data-theme="light">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{_escape(summary.get("campaign_id", "Campaign report"))}</title>
+{auto_refresh}  <title>{_escape(summary.get("campaign_id", "Campaign report"))}</title>
   <style>
     :root {{ color-scheme: light; --background: oklch(1 0 0); --surface: oklch(1 0 0); --raised: oklch(.97 .001 106.424); --foreground: oklch(.366 .008 253); --secondary: oklch(.553 .013 58.071); --border: oklch(.923 .003 48.717); --success: oklch(.723 .219 149.579); --warning: oklch(.769 .188 70.08); --danger: oklch(.577 .245 27.325); }}
     @media (prefers-color-scheme: dark) {{ :root {{ color-scheme: dark; --background: oklch(.147 .004 49.25); --surface: oklch(.216 .006 56.043); --raised: oklch(.268 .007 34.298); --foreground: oklch(.985 .001 106.423); --secondary: oklch(.709 .01 56.259); --border: oklch(1 0 0 / 10%); --success: oklch(.723 .219 149.579); --warning: oklch(.769 .188 70.08); --danger: oklch(.704 .191 22.216); }} }}

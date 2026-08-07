@@ -53,6 +53,29 @@ class ReportTests(unittest.TestCase):
             self.assertTrue((root / "report" / "report.html").is_file())
             self.assertTrue((root / "report" / "summary.json").is_file())
 
+    def test_running_report_refreshes_until_campaign_finishes(self) -> None:
+        running = render_campaign_report(
+            {
+                "campaign_id": "campaign",
+                "status": "running",
+                "created_at": "2026-08-06T00:00:00+00:00",
+                "candidates": [],
+                "suites": [],
+            }
+        )
+        finished = render_campaign_report(
+            {
+                "campaign_id": "campaign",
+                "status": "succeeded",
+                "created_at": "2026-08-06T00:00:00+00:00",
+                "candidates": [],
+                "suites": [],
+            }
+        )
+
+        self.assertIn('<meta http-equiv="refresh" content="3">', running)
+        self.assertNotIn('http-equiv="refresh"', finished)
+
 
 if __name__ == "__main__":
     unittest.main()
