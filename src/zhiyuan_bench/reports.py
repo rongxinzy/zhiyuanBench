@@ -29,11 +29,21 @@ def _suite_row(suite: dict[str, Any]) -> str:
     failure_text = ""
     if isinstance(failure, dict):
         failure_text = _escape(failure.get("message", ""))
+    phase_text = ""
+    if suite.get("phase"):
+        phase_text = str(suite["phase"])
+        phase_progress = suite.get("phase_progress")
+        if isinstance(phase_progress, dict) and isinstance(
+            phase_progress.get("total"), int
+        ):
+            phase_text += (
+                f" · {phase_progress.get('completed', 0)}/{phase_progress['total']}"
+            )
     return f"""
       <tr>
         <td><span class="suite-name">{_escape(suite.get("id", ""))}</span><span class="bridge">{_escape(suite.get("bridge", ""))}</span></td>
         <td><span class="status status-{_escape(suite.get("status", "unknown"))}">{_escape(suite.get("status", "unknown"))}</span></td>
-        <td><div class="progress-cell">{progress_element}<span>{progress_text}</span></div></td>
+        <td><div class="progress-cell"><div class="progress-overall">{progress_element}<span>{progress_text}</span></div><span class="progress-phase">{_escape(phase_text)}</span></div></td>
         <td class="failure">{failure_text}</td>
       </tr>"""
 
@@ -69,7 +79,7 @@ def render_campaign_report(summary: dict[str, Any]) -> str:
     h1 {{ margin: 0 0 4px; font-size: 20px; line-height: 1.375; font-weight: 600; letter-spacing: 0; }} p {{ margin: 0; color: var(--secondary); }} code {{ padding: 2px 6px; border-radius: 8px; background: var(--raised); font: 12px/1.4 "SF Mono", Consolas, monospace; }}
     .overall {{ text-align: right; }} .overall strong {{ display: block; font-size: 16px; font-weight: 600; }} .candidates {{ display: flex; flex-wrap: wrap; gap: 8px; padding: 20px 0; }} .candidate {{ display: flex; align-items: center; gap: 8px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }} .candidate-label {{ color: var(--secondary); font-size: 12px; }}
     .table-wrap {{ overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; }} table {{ width: 100%; border-collapse: collapse; background: var(--surface); }} th, td {{ padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: middle; }} th {{ color: var(--secondary); background: var(--raised); font-size: 12px; font-weight: 500; }} tr:last-child td {{ border-bottom: 0; }} .suite-name, .bridge {{ display: block; }} .suite-name {{ font-weight: 500; }} .bridge, .failure {{ color: var(--secondary); font-size: 12px; }}
-    .status {{ font-weight: 500; }} .status-succeeded {{ color: var(--success); }} .status-failed {{ color: var(--danger); }} .status-skipped, .status-completed_with_issues {{ color: var(--warning); }} .progress-cell {{ display: grid; grid-template-columns: minmax(80px, 1fr) auto; align-items: center; gap: 8px; min-width: 130px; }} progress {{ width: 100%; height: 6px; accent-color: var(--foreground); }} footer {{ margin-top: 16px; color: var(--secondary); font-size: 12px; }}
+    .status {{ font-weight: 500; }} .status-succeeded {{ color: var(--success); }} .status-failed {{ color: var(--danger); }} .status-skipped, .status-completed_with_issues {{ color: var(--warning); }} .progress-cell {{ display: grid; gap: 4px; min-width: 150px; }} .progress-overall {{ display: grid; grid-template-columns: minmax(80px, 1fr) auto; align-items: center; gap: 8px; }} .progress-phase {{ overflow: hidden; color: var(--secondary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }} progress {{ width: 100%; height: 6px; accent-color: var(--foreground); }} footer {{ margin-top: 16px; color: var(--secondary); font-size: 12px; }}
     @media (max-width: 640px) {{ main {{ width: min(100% - 24px, 1120px); padding-top: 20px; }} header {{ flex-direction: column; }} .overall {{ text-align: left; }} th:nth-child(4), td:nth-child(4) {{ display: none; }} }}
   </style>
 </head>

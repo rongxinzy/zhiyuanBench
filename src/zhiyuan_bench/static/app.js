@@ -346,14 +346,21 @@ async function loadHistory() {
 function progressCell(suite) {
   const cell = element("td");
   const wrap = element("div", "progress-cell");
+  const overall = element("div", "progress-overall");
   const progress = suite.progress;
   if (progress && Number.isInteger(progress.total) && progress.total > 0) {
     const bar = element("progress");
     bar.max = progress.total;
     bar.value = progress.completed || 0;
-    wrap.append(bar, element("span", "", `${progress.completed || 0}/${progress.total}`));
+    overall.append(bar, element("span", "", `${progress.completed || 0}/${progress.total}`));
   } else {
-    wrap.append(element("span", "", "-"));
+    overall.append(element("span", "", "-"));
+  }
+  wrap.append(overall);
+  if (suite.phase) {
+    const phase = suite.phase_progress;
+    const phaseCount = phase && Number.isInteger(phase.total) ? ` · ${phase.completed || 0}/${phase.total}` : "";
+    wrap.append(element("span", "progress-phase", `${suite.phase}${phaseCount}`));
   }
   cell.append(wrap);
   return cell;
