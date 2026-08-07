@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import json
 import os
 import subprocess
 import sys
+import threading
+import urllib.request
+import webbrowser
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -15,8 +19,9 @@ from typing import Any
 from starlette.applications import Starlette
 from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
-from starlette.responses import JSONResponse, Response, StreamingResponse
-from starlette.routing import Route
+from starlette.responses import FileResponse, JSONResponse, Response, StreamingResponse
+from starlette.routing import Mount, Route
+from starlette.staticfiles import StaticFiles
 
 from zhiyuan_bench.campaigns import (
     CAMPAIGN_SUITES,
@@ -27,6 +32,12 @@ from zhiyuan_bench.campaigns import (
 from zhiyuan_bench.locking import RunLock
 from zhiyuan_bench.registry import select_bridge, suite_by_id
 from zhiyuan_bench.worktrees import list_local_branches
+
+STATIC_ROOT = Path(__file__).with_name("static")
+MODEL_REQUIRED_ENVIRONMENT = (
+    "ZHIYUAN_MODEL_BASE_URL",
+    "ZHIYUAN_MODEL_ID",
+)
 
 
 @dataclass(frozen=True)
@@ -194,6 +205,138 @@ def _suite_payload() -> list[dict[str, Any]]:
     return result
 
 
+def _service_readiness(suite_ids: tuple[str, ...] | list[str]) -> dict[str, Any]:
+    model_ready = False
+    model_reason = "not_configured"
+    base_url = os.environ.get("ZHIYUAN_MODEL_BASE_URL", "").rstrip("/")
+    if base_url and os.environ.get("ZHIYUAN_MODEL_ID"):
+        try:
+            with urllib.request.urlopen(f"{base_url}/models", timeout=5) as response:
+                model_ready = response.status == 200
+                model_reason = "ready" if model_ready else "unhealthy"
+        except (OSError, ValueError):
+            model_reason = "unreachable"
+
+    needs_docker = any(
+        "sandbox" in suite_by_id(suite_id).required_capabilities
+        for suite_id in suite_ids
+    )
+    docker_ready = not needs_docker
+    docker_reason = "not_required" if not needs_docker else "not_configured"
+    docker_host = os.environ.get("DOCKER_HOST")
+    if needs_docker and docker_host:
+        try:
+            result = subprocess.run(
+                [
+                    "docker",
+                    "-H",
+                    docker_host,
+                    "info",
+                    "--format",
+                    "{{.ServerVersion}}",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            docker_ready = result.returncode == 0
+            docker_reason = "ready" if docker_ready else "unreachable"
+        except (OSError, subprocess.SubprocessError):
+            docker_reason = "unreachable"
+
+    return {
+        "model_api": {"ready": model_ready, "reason": model_reason},
+        "docker": {"ready": docker_ready, "reason": docker_reason},
+    }
+
+
+def _suite_readiness(
+    suite_id: str, services: dict[str, dict[str, Any]]
+) -> dict[str, Any]:
+    suite = suite_by_id(suite_id)
+    required_environment = list(MODEL_REQUIRED_ENVIRONMENT)
+    required_environment.extend(suite.required_environment)
+    if "sandbox" in suite.required_capabilities:
+        required_environment.append("DOCKER_HOST")
+    missing_environment = sorted(
+        {name for name in required_environment if not os.environ.get(name)}
+    )
+    missing_modules = sorted(
+        name
+        for name in suite.required_python_modules
+        if importlib.util.find_spec(name) is None
+    )
+    platform_supported = not suite.required_host_platforms or any(
+        sys.platform.startswith(platform)
+        for platform in suite.required_host_platforms
+    )
+    unavailable_services = []
+    if not services["model_api"]["ready"]:
+        unavailable_services.append("model_api")
+    if (
+        "sandbox" in suite.required_capabilities
+        and not services["docker"]["ready"]
+    ):
+        unavailable_services.append("docker")
+    return {
+        "id": suite.id,
+        "ready": not missing_environment
+        and not missing_modules
+        and platform_supported
+        and not unavailable_services,
+        "missing_environment": missing_environment,
+        "missing_python_modules": missing_modules,
+        "platform_supported": platform_supported,
+        "required_host_platforms": list(suite.required_host_platforms),
+        "unavailable_services": unavailable_services,
+    }
+
+
+def _readiness(
+    suite_ids: tuple[str, ...] | list[str] = CAMPAIGN_SUITES,
+) -> dict[str, Any]:
+    services = _service_readiness(suite_ids)
+    suites = [_suite_readiness(suite_id, services) for suite_id in suite_ids]
+    missing_model_environment = [
+        name for name in MODEL_REQUIRED_ENVIRONMENT if not os.environ.get(name)
+    ]
+    return {
+        "schema_version": 1,
+        "ready": all(suite["ready"] for suite in suites),
+        "missing_environment": missing_model_environment,
+        "services": services,
+        "suites": suites,
+    }
+
+
+def _unavailable_message(readiness: dict[str, Any]) -> str:
+    unavailable = [suite for suite in readiness["suites"] if not suite["ready"]]
+    details = []
+    for suite in unavailable:
+        reasons = []
+        if suite["missing_environment"]:
+            reasons.append(
+                "missing environment " + ", ".join(suite["missing_environment"])
+            )
+        if suite["missing_python_modules"]:
+            reasons.append(
+                "missing Python modules "
+                + ", ".join(suite["missing_python_modules"])
+            )
+        if not suite["platform_supported"]:
+            reasons.append(
+                "requires host platform "
+                + " or ".join(suite["required_host_platforms"])
+            )
+        if suite["unavailable_services"]:
+            reasons.append(
+                "unavailable services " + ", ".join(suite["unavailable_services"])
+            )
+        details.append(f"{suite['id']}: {'; '.join(reasons)}")
+    return "Selected suites are not ready: " + " | ".join(details)
+
+
 def _error(message: str, status_code: int) -> JSONResponse:
     return JSONResponse({"error": message}, status_code=status_code)
 
@@ -235,7 +378,9 @@ def _parse_create_payload(value: Any) -> dict[str, Any]:
         "branch_values": branch_values,
         "limit": limit,
         "concurrency": concurrency,
-        "reviewer_required_candidates": set(reviewer) if reviewer else None,
+        "reviewer_required_candidates": (
+            set(reviewer) if reviewer is not None else None
+        ),
         "run": bool(value.get("run", False)),
     }
 
@@ -271,8 +416,16 @@ def create_app(
     config = config.resolved()
     launcher = launcher or CampaignLauncher(config)
 
+    async def index(_request: Request) -> Response:
+        return FileResponse(
+            STATIC_ROOT / "index.html", headers={"Cache-Control": "no-cache"}
+        )
+
     async def health(_request: Request) -> Response:
         return JSONResponse({"status": "ok", "schema_version": 1})
+
+    async def readiness(_request: Request) -> Response:
+        return JSONResponse(await run_in_threadpool(_readiness))
 
     async def configuration(_request: Request) -> Response:
         return JSONResponse(
@@ -308,6 +461,18 @@ def create_app(
         try:
             payload = _parse_create_payload(await request.json())
             should_run = payload.pop("run")
+            if should_run:
+                run_readiness = await run_in_threadpool(
+                    _readiness, payload["suite_ids"]
+                )
+                if any(not suite["ready"] for suite in run_readiness["suites"]):
+                    return JSONResponse(
+                        {
+                            "error": _unavailable_message(run_readiness),
+                            "readiness": run_readiness,
+                        },
+                        status_code=503,
+                    )
             path = await run_in_threadpool(
                 create_campaign,
                 repo=config.repo,
@@ -339,6 +504,17 @@ def create_app(
     async def campaign_run(request: Request) -> Response:
         try:
             path = _campaign_dir(config, request.path_params["campaign_id"])
+            campaign = read_campaign(path)
+            suite_ids = [str(item["id"]) for item in campaign["suites"]]
+            run_readiness = await run_in_threadpool(_readiness, suite_ids)
+            if any(not suite["ready"] for suite in run_readiness["suites"]):
+                return JSONResponse(
+                    {
+                        "error": _unavailable_message(run_readiness),
+                        "readiness": run_readiness,
+                    },
+                    status_code=503,
+                )
             launch = await run_in_threadpool(launcher.launch, path)
         except FileNotFoundError:
             return _error("Campaign not found", 404)
@@ -347,6 +523,20 @@ def create_app(
         except (OSError, ValueError, subprocess.SubprocessError) as error:
             return _error(str(error), 400)
         return JSONResponse({"status": "started", "runner": launch}, status_code=202)
+
+    async def campaign_report(request: Request) -> Response:
+        try:
+            path = _campaign_dir(config, request.path_params["campaign_id"])
+            report = path / "report" / "report.html"
+            if not report.is_file():
+                raise FileNotFoundError(report)
+        except FileNotFoundError:
+            return _error("Campaign report not found", 404)
+        return FileResponse(
+            report,
+            media_type="text/html",
+            headers={"Cache-Control": "no-cache"},
+        )
 
     async def campaign_events(request: Request) -> Response:
         try:
@@ -391,7 +581,9 @@ def create_app(
     return Starlette(
         debug=False,
         routes=[
+            Route("/", index),
             Route("/api/health", health),
+            Route("/api/readiness", readiness),
             Route("/api/config", configuration),
             Route("/api/suites", suites),
             Route("/api/branches", branches),
@@ -399,13 +591,19 @@ def create_app(
             Route("/api/campaigns", campaign_create, methods=["POST"]),
             Route("/api/campaigns/{campaign_id}", campaign_detail),
             Route("/api/campaigns/{campaign_id}/run", campaign_run, methods=["POST"]),
+            Route("/api/campaigns/{campaign_id}/report", campaign_report),
             Route("/api/campaigns/{campaign_id}/events", campaign_events),
+            Mount("/static", app=StaticFiles(directory=STATIC_ROOT), name="static"),
         ],
     )
 
 
 def run_web_server(
-    config: WebConfig, *, host: str = "127.0.0.1", port: int = 8765
+    config: WebConfig,
+    *,
+    host: str = "127.0.0.1",
+    port: int = 8765,
+    open_browser: bool = False,
 ) -> None:
     try:
         import uvicorn
@@ -413,4 +611,11 @@ def run_web_server(
         raise RuntimeError(
             "Web dependencies are missing; install zhiyuan-bench[web]"
         ) from error
+    if open_browser:
+        browser_host = "127.0.0.1" if host in {"0.0.0.0", "::"} else host
+        browser_timer = threading.Timer(
+            0.75, webbrowser.open, args=(f"http://{browser_host}:{port}/",)
+        )
+        browser_timer.daemon = True
+        browser_timer.start()
     uvicorn.run(create_app(config), host=host, port=port, log_level="info")

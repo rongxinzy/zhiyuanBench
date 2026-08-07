@@ -761,7 +761,11 @@ def create_run(
             f"{suite.max_candidates or 'many'} candidates"
         )
     candidate_labels = {candidate.label for candidate in candidates}
-    reviewer_required = reviewer_required_candidates or candidate_labels
+    reviewer_required = (
+        candidate_labels
+        if reviewer_required_candidates is None
+        else reviewer_required_candidates
+    )
     unknown_reviewer_labels = reviewer_required - candidate_labels
     if unknown_reviewer_labels:
         raise ValueError(

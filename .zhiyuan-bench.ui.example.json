@@ -1,0 +1,26 @@
+{
+  "python": "C:\\path\\to\\python.exe",
+  "repo": "C:\\path\\to\\RongxinAI",
+  "workspace": "C:\\path\\to\\inspect_evals",
+  "recordsRoot": "C:\\path\\to\\zhiyuan-bench-records",
+  "host": "127.0.0.1",
+  "port": 8765,
+  "environment": {
+    "ZHIYUAN_MODEL_BASE_URL": "http://model-host:8000/v1",
+    "ZHIYUAN_MODEL_API_KEY": "local-vllm",
+    "ZHIYUAN_MODEL_ID": "gemma-4-31B-it",
+    "ZHIYUAN_MODEL_CONTEXT_WINDOW": "131072",
+    "ZHIYUAN_MODEL_MAX_TOKENS": "8192",
+    "ZHIYUAN_MODEL_TEMPERATURE": "0",
+    "ZHIYUAN_MODEL_SEED": "237",
+    "ZHIYUAN_HTTP_IDLE_TIMEOUT_MS": "300000",
+    "ZHIYUAN_INSPECT_MODEL_TIMEOUT_SECONDS": "300",
+    "ZHIYUAN_BRIDGE_TIMEOUT_SECONDS": "1800",
+    "ZHIYUAN_INSPECT_TIME_LIMIT_SECONDS": "1860",
+    "ZHIYUAN_SUBAGENT_TIMEOUT_MS": "900000",
+    "ZHIYUAN_PI_THINKING_LEVEL": "off",
+    "ZHIYUAN_MODEL_PROFILE": "gemma-4-31b-it-vllm-0.25.1-131k-t0-seed237",
+    "ZHIYUAN_CANDIDATE_POLICY_MAX_ITERATIONS": "8",
+    "DOCKER_HOST": "ssh://user@docker-host"
+  }
+}
