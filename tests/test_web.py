@@ -364,6 +364,50 @@ class WebTests(unittest.TestCase):
         self.assertEqual(response.headers["content-type"].split(";")[0], "text/html")
         self.assertIn(path.name, response.text)
 
+    def test_report_request_recovers_dead_runner_and_missing_report(self) -> None:
+        path = self._campaign()
+        manifest = json.loads((path / "campaign.json").read_text(encoding="utf-8"))
+        manifest["status"] = "running"
+        manifest["current_suite"] = "bfcl-single-turn"
+        manifest["runner"] = {"pid": 999999, "started_at": datetime.now(UTC).isoformat()}
+        manifest["suites"][0]["status"] = "running"
+        manifest["suites"][0]["progress"] = {"completed": 12, "total": 7962}
+        write_campaign(path, manifest)
+        (path / "report" / "report.html").unlink()
+
+        with patch("zhiyuan_bench.web._process_alive", return_value=False):
+            response = self.client.get(f"/api/campaigns/{path.name}/report")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("中断报告", response.text)
+        recovered = json.loads((path / "campaign.json").read_text(encoding="utf-8"))
+        self.assertEqual(recovered["status"], "interrupted")
+        self.assertEqual(recovered["suites"][0]["status"], "interrupted")
+        self.assertEqual(recovered["suites"][0]["progress"]["completed"], 12)
+
+    def test_report_request_rebuilds_missing_terminal_report(self) -> None:
+        path = self._campaign()
+        (path / "report" / "report.html").unlink()
+
+        response = self.client.get(f"/api/campaigns/{path.name}/report")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue((path / "report" / "report.html").is_file())
+
+    def test_report_request_renders_when_record_directory_is_read_only(self) -> None:
+        path = self._campaign()
+
+        with patch(
+            "zhiyuan_bench.web.write_campaign_report",
+            side_effect=PermissionError("read-only record"),
+        ):
+            response = self.client.get(f"/api/campaigns/{path.name}/report")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["content-type"].split(";")[0], "text/html")
+        self.assertIn(path.name, response.text)
+        self.assertIn("部分报告", response.text)
+
 
 if __name__ == "__main__":
     unittest.main()

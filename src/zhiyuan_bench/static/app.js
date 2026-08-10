@@ -12,7 +12,7 @@ const I18N = {
     chooseSuite: "至少选择一个测试集", differentBranches: "请选择两个不同分支", creating: "正在创建记录",
     savedNotStarted: "记录已保存，但当前已有评测在运行", started: "评测已启动", resumed: "恢复请求已提交",
     loadFailed: "加载失败", requestFailed: "请求失败", noEvents: "等待事件", running: "运行中", succeeded: "成功",
-    failed: "失败", skipped: "已跳过", createdStatus: "待运行", cancelled: "已取消", completedWithIssues: "完成但有异常",
+    failed: "失败", skipped: "已跳过", createdStatus: "待运行", cancelled: "已取消", interrupted: "已中断", completedWithIssues: "完成但有异常",
     refresh: "刷新", theme: "切换主题", open: "打开记录", selected: "已选择", recentRecords: "近期记录",
     checkingRuntime: "正在检查运行环境", runtimeReady: "所选测试集运行配置就绪", runtimeUnavailable: "所选测试集运行配置不完整",
     unavailable: "不可用"
@@ -30,7 +30,7 @@ const I18N = {
     chooseSuite: "Select at least one suite", differentBranches: "Select two different branches", creating: "Creating record",
     savedNotStarted: "Record saved, but another evaluation is active", started: "Evaluation started", resumed: "Resume requested",
     loadFailed: "Load failed", requestFailed: "Request failed", noEvents: "Waiting for events", running: "Running", succeeded: "Succeeded",
-    failed: "Failed", skipped: "Skipped", createdStatus: "Pending", cancelled: "Cancelled", completedWithIssues: "Completed with issues",
+    failed: "Failed", skipped: "Skipped", createdStatus: "Pending", cancelled: "Cancelled", interrupted: "Interrupted", completedWithIssues: "Completed with issues",
     refresh: "Refresh", theme: "Toggle theme", open: "Open record", selected: "selected", recentRecords: "Recent records",
     checkingRuntime: "Checking runtime", runtimeReady: "Selected suites are configured", runtimeUnavailable: "Selected suites are not configured",
     unavailable: "Unavailable"
@@ -54,7 +54,7 @@ const state = {
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
 const t = (key) => I18N[state.locale][key] || key;
-const terminalCampaignStatuses = new Set(["succeeded", "completed_with_issues", "cancelled"]);
+const terminalCampaignStatuses = new Set(["succeeded", "completed_with_issues", "cancelled", "interrupted"]);
 
 function closeEventStream() {
   if (!state.eventSource) return;
@@ -257,7 +257,7 @@ function renderReadiness() {
 }
 
 function statusKey(status) {
-  return ({ created: "createdStatus", running: "running", succeeded: "succeeded", failed: "failed", skipped: "skipped", cancelled: "cancelled", completed_with_issues: "completedWithIssues" })[status] || status;
+  return ({ created: "createdStatus", running: "running", succeeded: "succeeded", failed: "failed", skipped: "skipped", cancelled: "cancelled", interrupted: "interrupted", completed_with_issues: "completedWithIssues" })[status] || status;
 }
 
 function statusNode(status) {

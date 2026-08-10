@@ -80,6 +80,24 @@ class ReportTests(unittest.TestCase):
         self.assertIn('<meta http-equiv="refresh" content="3">', running)
         self.assertNotIn('http-equiv="refresh"', finished)
 
+    def test_interrupted_report_warns_that_results_are_partial(self) -> None:
+        report = render_campaign_report(
+            {
+                "campaign_id": "campaign",
+                "status": "interrupted",
+                "created_at": "2026-08-06T00:00:00+00:00",
+                "failure": {"message": "runner stopped"},
+                "report": {"kind": "interrupted"},
+                "candidates": [],
+                "suites": [],
+            }
+        )
+
+        self.assertIn("中断报告", report)
+        self.assertIn("未完成测试集不构成有效对比", report)
+        self.assertIn("runner stopped", report)
+        self.assertNotIn('http-equiv="refresh"', report)
+
 
 if __name__ == "__main__":
     unittest.main()

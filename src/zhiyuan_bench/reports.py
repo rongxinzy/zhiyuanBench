@@ -48,6 +48,33 @@ def _suite_row(suite: dict[str, Any]) -> str:
       </tr>"""
 
 
+def _report_notice(summary: dict[str, Any]) -> str:
+    kind = str((summary.get("report") or {}).get("kind", "partial"))
+    title, description = {
+        "complete": ("完整报告", "所有测试集均已完成并通过结果验证。"),
+        "completed_with_issues": (
+            "异常结算报告",
+            "评测流程已结束；只有标记为 succeeded 的测试集构成有效对比。",
+        ),
+        "interrupted": (
+            "中断报告",
+            "报告保留中断前的进度和错误；未完成测试集不构成有效对比。",
+        ),
+        "partial": (
+            "部分报告",
+            "评测仍在进行或尚未开始；此页面会随持久化进度更新。",
+        ),
+    }.get(kind, ("部分报告", "当前记录尚未形成完整对比结果。"))
+    failure = summary.get("failure")
+    failure_text = ""
+    if isinstance(failure, dict) and failure.get("message"):
+        failure_text = f'<span class="notice-detail">{_escape(failure["message"])}</span>'
+    return (
+        f'<aside class="report-notice report-notice-{_escape(kind)}">'
+        f"<strong>{title}</strong><span>{description}</span>{failure_text}</aside>"
+    )
+
+
 def render_campaign_report(summary: dict[str, Any]) -> str:
     candidates = "".join(
         f"""
@@ -59,6 +86,7 @@ def render_campaign_report(summary: dict[str, Any]) -> str:
         for item in summary.get("candidates", [])
     )
     rows = "".join(_suite_row(suite) for suite in summary.get("suites", []))
+    notice = _report_notice(summary)
     generated = datetime.now(UTC).isoformat()
     auto_refresh = (
         '  <meta http-equiv="refresh" content="3">\n'
@@ -79,7 +107,7 @@ def render_campaign_report(summary: dict[str, Any]) -> str:
     h1 {{ margin: 0 0 4px; font-size: 20px; line-height: 1.375; font-weight: 600; letter-spacing: 0; }} p {{ margin: 0; color: var(--secondary); }} code {{ padding: 2px 6px; border-radius: 8px; background: var(--raised); font: 12px/1.4 "SF Mono", Consolas, monospace; }}
     .overall {{ text-align: right; }} .overall strong {{ display: block; font-size: 16px; font-weight: 600; }} .candidates {{ display: flex; flex-wrap: wrap; gap: 8px; padding: 20px 0; }} .candidate {{ display: flex; align-items: center; gap: 8px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }} .candidate-label {{ color: var(--secondary); font-size: 12px; }}
     .table-wrap {{ overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; }} table {{ width: 100%; border-collapse: collapse; background: var(--surface); }} th, td {{ padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: middle; }} th {{ color: var(--secondary); background: var(--raised); font-size: 12px; font-weight: 500; }} tr:last-child td {{ border-bottom: 0; }} .suite-name, .bridge {{ display: block; }} .suite-name {{ font-weight: 500; }} .bridge, .failure {{ color: var(--secondary); font-size: 12px; }}
-    .status {{ font-weight: 500; }} .status-succeeded {{ color: var(--success); }} .status-failed {{ color: var(--danger); }} .status-skipped, .status-completed_with_issues {{ color: var(--warning); }} .progress-cell {{ display: grid; gap: 4px; min-width: 150px; }} .progress-overall {{ display: grid; grid-template-columns: minmax(80px, 1fr) auto; align-items: center; gap: 8px; }} .progress-phase {{ overflow: hidden; color: var(--secondary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }} progress {{ width: 100%; height: 6px; accent-color: var(--foreground); }} footer {{ margin-top: 16px; color: var(--secondary); font-size: 12px; }}
+    .status {{ font-weight: 500; }} .status-succeeded {{ color: var(--success); }} .status-failed, .status-interrupted {{ color: var(--danger); }} .status-skipped, .status-completed_with_issues, .status-cancelled {{ color: var(--warning); }} .report-notice {{ display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 20px 0; padding: 12px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--raised); }} .report-notice strong {{ font-weight: 600; }} .report-notice span {{ color: var(--secondary); }} .report-notice .notice-detail {{ grid-column: 1 / -1; font: 12px/1.6 "SF Mono", Consolas, monospace; overflow-wrap: anywhere; }} .progress-cell {{ display: grid; gap: 4px; min-width: 150px; }} .progress-overall {{ display: grid; grid-template-columns: minmax(80px, 1fr) auto; align-items: center; gap: 8px; }} .progress-phase {{ overflow: hidden; color: var(--secondary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }} progress {{ width: 100%; height: 6px; accent-color: var(--foreground); }} footer {{ margin-top: 16px; color: var(--secondary); font-size: 12px; }}
     @media (max-width: 640px) {{ main {{ width: min(100% - 24px, 1120px); padding-top: 20px; }} header {{ flex-direction: column; }} .overall {{ text-align: left; }} th:nth-child(4), td:nth-child(4) {{ display: none; }} }}
   </style>
 </head>
@@ -90,6 +118,7 @@ def render_campaign_report(summary: dict[str, Any]) -> str:
       <div class="overall"><strong>{_escape(summary.get("status", "unknown"))}</strong><span>{_escape(summary.get("completed_at") or summary.get("created_at", ""))}</span></div>
     </header>
     <section class="candidates" aria-label="Candidates">{candidates}</section>
+    {notice}
     <div class="table-wrap"><table><thead><tr><th>测试集</th><th>状态</th><th>进度</th><th>记录</th></tr></thead><tbody>{rows}</tbody></table></div>
     <footer>Generated {generated}</footer>
   </main>

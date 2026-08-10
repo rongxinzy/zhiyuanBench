@@ -91,6 +91,8 @@ records/
 
 `campaign.json` is the authoritative resumable state, `events.jsonl` is append-only prompt-free history, and `live-summary.json` is an atomic compact view for dashboards. `report/report.html` is a standalone, responsive summary that can be archived or opened without the Web application; `report/summary.json` retains the same prompt-free data for later analysis. Physical run directories use compact numeric suite positions to keep Inspect artifact paths below the Windows path limit; each run manifest retains the readable suite identity. Run directories retain the existing raw logs, Inspect artifacts, validation output, and comparison reports. Benchmark prompts, targets, answers, and sample IDs are never copied into campaign progress files.
 
+A prompt-free campaign report exists from record creation onward and is refreshed after every persisted state change. Catchable cancellations and unexpected exits finalize the active suite and report explicitly. If a process is terminated before cleanup can run, the Web API detects the dead runner on the next record access, marks the campaign interrupted, and rebuilds the partial report. A read-only record can still be rendered dynamically, while only suites that reached `succeeded` count as valid comparisons.
+
 The local Web application is an optional install so the base runner remains dependency-free:
 
 ```text

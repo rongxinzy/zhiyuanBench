@@ -1009,11 +1009,17 @@ def run_manifest(
             sink.emit("run_finished", status="succeeded")
         except KeyboardInterrupt:
             manifest["status"] = "cancelled"
+            manifest["completed_at"] = datetime.now(UTC).isoformat()
+            manifest["failure"] = {
+                "type": "KeyboardInterrupt",
+                "message": "Run cancelled by keyboard interrupt",
+            }
             write_manifest(run_dir, manifest)
             sink.emit("run_finished", status="cancelled")
             raise
         except BaseException as error:
             manifest["status"] = "failed"
+            manifest["completed_at"] = datetime.now(UTC).isoformat()
             manifest["failure"] = {"type": type(error).__name__, "message": str(error)}
             write_manifest(run_dir, manifest)
             sink.emit(
