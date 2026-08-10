@@ -91,6 +91,16 @@ def _candidate_from_dict(value: dict[str, Any]) -> Candidate:
     )
 
 
+def _suite_phase(suite: dict[str, Any]) -> str:
+    phase = suite.get("phase")
+    if isinstance(phase, str) and phase:
+        return phase
+    failure = suite.get("failure")
+    message = failure.get("message") if isinstance(failure, dict) else None
+    match = re.match(r"Phase ([A-Za-z0-9_.-]+) failed;", str(message or ""))
+    return match.group(1) if match else ""
+
+
 def _legacy_suite_progress(
     suite: dict[str, Any], manifest: dict[str, Any]
 ) -> tuple[dict[str, int], dict[str, int] | None]:
@@ -105,7 +115,7 @@ def _legacy_suite_progress(
     if not isinstance(progress, dict) or progress.get("total") == expected["total"]:
         return progress or expected, suite.get("phase_progress")
 
-    phase = str(suite.get("phase") or "")
+    phase = _suite_phase(suite)
     phase_progress = progress
     if suite.get("status") == "succeeded" or phase == "report":
         expected["completed"] = expected["total"]
@@ -152,6 +162,9 @@ def campaign_summary(manifest: dict[str, Any]) -> dict[str, Any]:
         }
         progress, phase_progress = _legacy_suite_progress(suite, manifest)
         summary_suite["progress"] = progress
+        phase = _suite_phase(suite)
+        if phase:
+            summary_suite["phase"] = phase
         if phase_progress is not None:
             summary_suite["phase_progress"] = phase_progress
         suites.append(summary_suite)
@@ -289,8 +302,10 @@ def _record_run_event(
     event: dict[str, Any],
 ) -> None:
     event_type = str(event.get("event_type", ""))
-    phase = str(event.get("phase") or "")
-    suite_state["phase"] = phase or None
+    event_phase = event.get("phase")
+    if isinstance(event_phase, str) and event_phase:
+        suite_state["phase"] = event_phase
+    phase = str(suite_state.get("phase") or "")
     details = event.get("details")
     if event_type == "phase_started":
         suite_state.pop("phase_progress", None)

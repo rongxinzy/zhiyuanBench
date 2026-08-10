@@ -145,6 +145,47 @@ class CampaignTests(unittest.TestCase):
             {"completed": 4, "total": 26},
         )
 
+    def test_summary_recovers_phase_from_legacy_failure(self) -> None:
+        manifest = {
+            "schema_version": 1,
+            "campaign_id": "legacy-failure",
+            "status": "completed_with_issues",
+            "created_at": "2026-08-07T00:00:00+00:00",
+            "limit": None,
+            "candidates": [
+                {"label": "baseline", "source_ref": "main", "revision": "a" * 40},
+                {
+                    "label": "candidate",
+                    "source_ref": "feature",
+                    "revision": "b" * 40,
+                },
+            ],
+            "suites": [
+                {
+                    "id": "agentdojo",
+                    "bridge": "headless-pi-production",
+                    "status": "failed",
+                    "phase": None,
+                    "progress": {"completed": 158, "total": 1014},
+                    "failure": {
+                        "type": "RuntimeError",
+                        "message": "Phase eval-baseline failed; see logs",
+                    },
+                }
+            ],
+        }
+
+        summary = campaign_summary(manifest)
+
+        self.assertEqual(summary["suites"][0]["phase"], "eval-baseline")
+        self.assertEqual(
+            summary["suites"][0]["progress"], {"completed": 158, "total": 2028}
+        )
+        self.assertEqual(
+            summary["suites"][0]["phase_progress"],
+            {"completed": 158, "total": 1014},
+        )
+
     def test_invalid_reviewer_label_does_not_create_worktrees(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -238,6 +279,12 @@ class CampaignTests(unittest.TestCase):
                             "details": {"completed": 1, "total": 1},
                         }
                     )
+                listener(
+                    {
+                        "event_type": "run_finished",
+                        "status": "succeeded",
+                    }
+                )
                 if suite_id == "agentbench-os-dev":
                     raise SuiteUnavailableError("Docker unavailable")
                 if suite_id == "codeipi":
@@ -276,6 +323,9 @@ class CampaignTests(unittest.TestCase):
                     suite["phase_progress"] == {"completed": 1, "total": 1}
                     for suite in completed["suites"]
                 )
+            )
+            self.assertTrue(
+                all(suite["phase"] == "eval-candidate" for suite in completed["suites"])
             )
 
     def test_resume_reuses_run_and_skips_successful_suite(self) -> None:
