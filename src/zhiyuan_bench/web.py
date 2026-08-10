@@ -31,7 +31,7 @@ from zhiyuan_bench.campaigns import (
     finalize_interrupted_campaign,
     read_campaign,
 )
-from zhiyuan_bench.locking import RunLock
+from zhiyuan_bench.locking import RunLock, process_alive as _process_alive
 from zhiyuan_bench.persistence import atomic_write_text
 from zhiyuan_bench.registry import select_bridge, suite_by_id
 from zhiyuan_bench.reports import render_campaign_report, write_campaign_report
@@ -58,20 +58,6 @@ class WebConfig:
 
 class CampaignConflictError(RuntimeError):
     """A campaign runner is already active for this records root."""
-
-
-def _process_alive(pid: int) -> bool:
-    if pid <= 0:
-        return False
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    except OSError:
-        return False
-    return True
 
 
 def _write_json(path: Path, value: dict[str, Any]) -> None:

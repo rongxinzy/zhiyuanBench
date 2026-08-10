@@ -1,13 +1,29 @@
 import json
 import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-from zhiyuan_bench.locking import RunLock
+from zhiyuan_bench.locking import RunLock, process_alive
 
 
 class RunLockTests(unittest.TestCase):
+    def test_detects_separate_live_process(self) -> None:
+        process = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(60)"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        try:
+            self.assertTrue(process_alive(process.pid))
+        finally:
+            process.terminate()
+            process.wait(timeout=10)
+        self.assertFalse(process_alive(process.pid))
+
     def test_refuses_live_runner(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "runner.lock"
