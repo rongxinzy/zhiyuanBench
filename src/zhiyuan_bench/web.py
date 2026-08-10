@@ -143,6 +143,13 @@ class CampaignLauncher:
             stdout_path.open("a", encoding="utf-8", newline="\n") as stdout,
             stderr_path.open("a", encoding="utf-8", newline="\n") as stderr,
         ):
+            process_group_options: dict[str, Any]
+            if os.name == "nt":
+                process_group_options = {
+                    "creationflags": subprocess.CREATE_NEW_PROCESS_GROUP
+                }
+            else:
+                process_group_options = {"start_new_session": True}
             process = subprocess.Popen(
                 command,
                 cwd=self.config.workspace,
@@ -151,6 +158,7 @@ class CampaignLauncher:
                 stdout=stdout,
                 stderr=stderr,
                 close_fds=True,
+                **process_group_options,
             )
         launch = {
             "schema_version": 1,
