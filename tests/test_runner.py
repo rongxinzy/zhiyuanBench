@@ -197,6 +197,7 @@ class RunnerTests(unittest.TestCase):
                     "validate-preflight-candidate",
                     "eval-candidate",
                     "validate-full-candidate",
+                    "report",
                 ],
             )
             preflight = phases[1]
@@ -221,6 +222,10 @@ class RunnerTests(unittest.TestCase):
             self.assertIn("--expected-samples", full_validation.command)
             self.assertIn("2", full_validation.command)
             self.assertIn("--require-reviewer-subagent", full_validation.command)
+            report = phases[5]
+            self.assertIn("--solo", report.command)
+            self.assertIn("--require-production-agent", report.command)
+            self.assertIn("--require-reviewer-subagent", report.command)
 
     def test_loopback_model_role_bypasses_system_proxy(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -285,6 +290,7 @@ class RunnerTests(unittest.TestCase):
                     "validate-preflight-candidate",
                     "eval-candidate",
                     "validate-full-candidate",
+                    "report",
                 ],
             )
             preflight = phases[1]
@@ -302,6 +308,53 @@ class RunnerTests(unittest.TestCase):
             full = phases[3]
             self.assertIn("grader=openai-api/zhiyuan/gemma-test", full.command)
             self.assertNotIn("preflight_benign_only=true", full.command)
+
+    def test_solo_report_preserves_explicitly_disabled_reviewer(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            candidate = Candidate("candidate", root, "a" * 40)
+            phases = build_phases(
+                suite_by_id("agentbench-os-dev"),
+                select_bridge(suite_by_id("agentbench-os-dev")),
+                [candidate],
+                root,
+                root / "run",
+                limit=2,
+                reviewer_required_candidates=set(),
+            )
+
+            evaluation = next(
+                phase for phase in phases if phase.id == "eval-candidate"
+            )
+            report = next(phase for phase in phases if phase.id == "report")
+            self.assertNotIn(
+                "ZHIYUAN_REQUIRE_REVIEWER_SUBAGENT", evaluation.environment
+            )
+            self.assertNotIn("--require-reviewer-subagent", report.command)
+            self.assertIn("--solo", report.command)
+            self.assertIn("candidate", report.command)
+            self.assertIn("2", report.command)
+
+    def test_bfcl_solo_run_generates_non_production_report(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            suite = suite_by_id("bfcl-single-turn")
+            phases = build_phases(
+                suite,
+                select_bridge(suite),
+                [Candidate("candidate", root, "a" * 40)],
+                root,
+                root / "run",
+                limit=3,
+            )
+
+            self.assertEqual([phase.id for phase in phases], ["eval-candidate", "report"])
+            report = phases[-1]
+            self.assertIn("--solo", report.command)
+            self.assertIn("--expected-samples", report.command)
+            self.assertIn("3", report.command)
+            self.assertNotIn("--require-production-agent", report.command)
+            self.assertNotIn("--require-reviewer-subagent", report.command)
 
     def test_model_role_timeout_can_be_configured(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

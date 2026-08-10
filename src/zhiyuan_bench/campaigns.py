@@ -185,6 +185,7 @@ def campaign_summary(manifest: dict[str, Any]) -> dict[str, Any]:
         )
     }
     campaign_status = str(manifest["status"])
+    report_mode = "solo" if len(manifest["candidates"]) == 1 else "comparison"
     report_kind = {
         "succeeded": "complete",
         "completed_with_issues": "completed_with_issues",
@@ -211,7 +212,11 @@ def campaign_summary(manifest: dict[str, Any]) -> dict[str, Any]:
         "counts": counts,
         "report": {
             "kind": report_kind,
-            "valid_comparisons": counts["succeeded"],
+            "mode": report_mode,
+            "valid_results": counts["succeeded"],
+            "valid_comparisons": (
+                counts["succeeded"] if report_mode == "comparison" else 0
+            ),
             "selected_suites": len(manifest["suites"]),
         },
         "suites": suites,
