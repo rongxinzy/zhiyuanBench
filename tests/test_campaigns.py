@@ -1,3 +1,4 @@
+import json
 import subprocess
 import tempfile
 import unittest
@@ -9,6 +10,7 @@ from zhiyuan_bench.campaigns import (
     campaign_id,
     campaign_summary,
     create_campaign,
+    finalize_interrupted_campaign,
     read_campaign,
     run_campaign,
     write_campaign,
@@ -186,6 +188,30 @@ class CampaignTests(unittest.TestCase):
             {"completed": 158, "total": 1014},
         )
 
+    def test_summary_marks_interrupted_report_as_partial_result(self) -> None:
+        manifest = {
+            "schema_version": 1,
+            "campaign_id": "interrupted",
+            "status": "interrupted",
+            "created_at": "2026-08-07T00:00:00+00:00",
+            "candidates": [],
+            "failure": {"type": "RunnerInterrupted", "message": "runner stopped"},
+            "suites": [
+                {
+                    "id": "agentbench-os-dev",
+                    "bridge": "headless-pi-production",
+                    "status": "interrupted",
+                }
+            ],
+        }
+
+        summary = campaign_summary(manifest)
+
+        self.assertEqual(summary["report"]["kind"], "interrupted")
+        self.assertEqual(summary["report"]["valid_comparisons"], 0)
+        self.assertEqual(summary["counts"]["interrupted"], 1)
+        self.assertEqual(summary["failure"]["message"], "runner stopped")
+
     def test_invalid_reviewer_label_does_not_create_worktrees(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -327,6 +353,138 @@ class CampaignTests(unittest.TestCase):
             self.assertTrue(
                 all(suite["phase"] == "eval-candidate" for suite in completed["suites"])
             )
+
+    def test_run_materializes_report_for_all_catchable_interruptions(self) -> None:
+        cases = (
+            (KeyboardInterrupt(), "cancelled"),
+            (SystemExit("runner exited"), "interrupted"),
+        )
+        for error, expected_status in cases:
+            with self.subTest(error=type(error).__name__), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                campaign_dir = root / "records" / "campaign"
+                candidate_root = root / "candidate"
+                candidate_root.mkdir()
+                write_campaign(
+                    campaign_dir,
+                    {
+                        "schema_version": 1,
+                        "campaign_id": "campaign",
+                        "status": "created",
+                        "created_at": datetime.now(UTC).isoformat(),
+                        "repo": str(root),
+                        "workspace": str(root),
+                        "records_root": str(root / "records"),
+                        "limit": 1,
+                        "concurrency": 1,
+                        "reviewer_required_candidates": [],
+                        "candidates": [
+                            {
+                                "label": "candidate",
+                                "root": str(candidate_root),
+                                "revision": "a" * 40,
+                                "source_ref": "candidate",
+                                "source_repo": str(root),
+                            }
+                        ],
+                        "suites": [
+                            {
+                                "id": "agentbench-os-dev",
+                                "bridge": "headless-pi-production",
+                                "status": "created",
+                                "attempts": 0,
+                            }
+                        ],
+                    },
+                )
+                run_dir = campaign_dir / "_runs" / "00" / "runs" / "run"
+                run_dir.mkdir(parents=True)
+
+                with (
+                    patch("zhiyuan_bench.campaigns.create_run", return_value=run_dir),
+                    patch("zhiyuan_bench.campaigns.run_manifest", side_effect=error),
+                    self.assertRaises(type(error)),
+                ):
+                    run_campaign(campaign_dir)
+
+                completed = read_campaign(campaign_dir)
+                self.assertEqual(completed["status"], expected_status)
+                self.assertEqual(completed["suites"][0]["status"], expected_status)
+                self.assertNotIn("current_suite", completed)
+                self.assertIsNotNone(completed.get("completed_at"))
+                report_summary = json.loads(
+                    (campaign_dir / "report" / "summary.json").read_text(
+                        encoding="utf-8"
+                    )
+                )
+                self.assertEqual(report_summary["report"]["kind"], "interrupted")
+
+    def test_finalize_orphaned_campaign_rebuilds_report(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            campaign_dir = Path(directory) / "campaign"
+            manifest = {
+                "schema_version": 1,
+                "campaign_id": "campaign",
+                "status": "running",
+                "created_at": datetime.now(UTC).isoformat(),
+                "records_root": str(Path(directory)),
+                "candidates": [],
+                "current_suite": "bfcl-single-turn",
+                "suites": [
+                    {
+                        "id": "bfcl-single-turn",
+                        "bridge": "headless-pi-capture",
+                        "status": "running",
+                        "progress": {"completed": 3373, "total": 7962},
+                    }
+                ],
+            }
+            write_campaign(campaign_dir, manifest)
+            (campaign_dir / "report" / "report.html").unlink()
+
+            finalized = finalize_interrupted_campaign(campaign_dir)
+
+            self.assertEqual(finalized["status"], "interrupted")
+            self.assertEqual(finalized["suites"][0]["status"], "interrupted")
+            self.assertTrue((campaign_dir / "report" / "report.html").is_file())
+            self.assertIn(
+                "中断报告",
+                (campaign_dir / "report" / "report.html").read_text(encoding="utf-8"),
+            )
+
+    def test_best_effort_orphan_recovery_returns_report_state_when_write_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            campaign_dir = Path(directory) / "campaign"
+            write_campaign(
+                campaign_dir,
+                {
+                    "schema_version": 1,
+                    "campaign_id": "campaign",
+                    "status": "running",
+                    "created_at": datetime.now(UTC).isoformat(),
+                    "records_root": directory,
+                    "candidates": [],
+                    "current_suite": "bfcl-single-turn",
+                    "suites": [
+                        {
+                            "id": "bfcl-single-turn",
+                            "bridge": "headless-pi-capture",
+                            "status": "running",
+                        }
+                    ],
+                },
+            )
+
+            with patch(
+                "zhiyuan_bench.campaigns.write_campaign",
+                side_effect=PermissionError("read-only record"),
+            ):
+                finalized = finalize_interrupted_campaign(
+                    campaign_dir, best_effort=True
+                )
+
+            self.assertEqual(finalized["status"], "interrupted")
+            self.assertEqual(finalized["suites"][0]["status"], "interrupted")
 
     def test_resume_reuses_run_and_skips_successful_suite(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -738,11 +738,13 @@ tbody tr:hover td {
   background: var(--zy-success);
 }
 
-.status-failed::before {
+.status-failed::before,
+.status-interrupted::before {
   background: var(--zy-destructive);
 }
 
 .status-skipped::before,
+.status-cancelled::before,
 .status-completed_with_issues::before {
   background: var(--zy-warning);
 }
