@@ -54,7 +54,7 @@ class RegistryTests(unittest.TestCase):
         self.assertEqual(suite.expected_samples, 1014)
         self.assertEqual(
             suite.preflight_task_args,
-            ("with_injections=false", "with_sandbox_tasks=no"),
+            ("with_injections=false", "with_sandbox_tasks=only"),
         )
         self.assertEqual(suite.required_python_modules, ("deepdiff", "email_validator"))
 

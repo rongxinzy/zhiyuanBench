@@ -434,7 +434,7 @@ class RunnerTests(unittest.TestCase):
                     limit=1,
                 )
 
-    def test_agentdojo_phase_uses_benign_non_sandbox_preflight(self) -> None:
+    def test_agentdojo_phase_uses_benign_sandbox_preflight(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             suite = suite_by_id("agentdojo")
@@ -452,9 +452,9 @@ class RunnerTests(unittest.TestCase):
             )
             full = next(phase for phase in phases if phase.id == "eval-candidate")
             self.assertIn("with_injections=false", preflight.command)
-            self.assertIn("with_sandbox_tasks=no", preflight.command)
+            self.assertIn("with_sandbox_tasks=only", preflight.command)
             self.assertNotIn("with_injections=false", full.command)
-            self.assertNotIn("with_sandbox_tasks=no", full.command)
+            self.assertNotIn("with_sandbox_tasks=only", full.command)
 
     def test_reviewer_validation_can_target_only_candidate2(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
