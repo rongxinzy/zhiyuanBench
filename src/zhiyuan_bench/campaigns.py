@@ -91,9 +91,59 @@ def _candidate_from_dict(value: dict[str, Any]) -> Candidate:
     )
 
 
+def _suite_phase(suite: dict[str, Any]) -> str:
+    phase = suite.get("phase")
+    if isinstance(phase, str) and phase:
+        return phase
+    failure = suite.get("failure")
+    message = failure.get("message") if isinstance(failure, dict) else None
+    match = re.match(r"Phase ([A-Za-z0-9_.-]+) failed;", str(message or ""))
+    return match.group(1) if match else ""
+
+
+def _legacy_suite_progress(
+    suite: dict[str, Any], manifest: dict[str, Any]
+) -> tuple[dict[str, int], dict[str, int] | None]:
+    """Translate phase-only progress written by older campaign manifests."""
+    candidates = manifest["candidates"]
+    expected = _suite_progress(
+        str(suite["id"]),
+        limit=manifest.get("limit"),
+        candidate_count=len(candidates),
+    )
+    progress = suite.get("progress")
+    if not isinstance(progress, dict) or progress.get("total") == expected["total"]:
+        return progress or expected, suite.get("phase_progress")
+
+    phase = _suite_phase(suite)
+    phase_progress = progress
+    if suite.get("status") == "succeeded" or phase == "report":
+        expected["completed"] = expected["total"]
+        return expected, phase_progress
+
+    samples_per_candidate = expected["total"] // len(candidates) if candidates else 0
+    for index, candidate in enumerate(candidates):
+        label = str(candidate["label"])
+        prior_samples = index * samples_per_candidate
+        if phase == f"eval-{label}":
+            expected["completed"] = prior_samples + int(progress.get("completed", 0))
+            break
+        if phase in {
+            f"preflight-{label}",
+            f"validate-preflight-{label}",
+        }:
+            expected["completed"] = prior_samples
+            break
+        if phase == f"validate-full-{label}":
+            expected["completed"] = prior_samples + samples_per_candidate
+            break
+    return expected, phase_progress
+
+
 def campaign_summary(manifest: dict[str, Any]) -> dict[str, Any]:
-    suites = [
-        {
+    suites = []
+    for suite in manifest["suites"]:
+        summary_suite = {
             key: suite.get(key)
             for key in (
                 "id",
@@ -101,6 +151,7 @@ def campaign_summary(manifest: dict[str, Any]) -> dict[str, Any]:
                 "status",
                 "phase",
                 "progress",
+                "phase_progress",
                 "run_dir",
                 "failure",
                 "attempts",
@@ -109,8 +160,14 @@ def campaign_summary(manifest: dict[str, Any]) -> dict[str, Any]:
             )
             if suite.get(key) is not None
         }
-        for suite in manifest["suites"]
-    ]
+        progress, phase_progress = _legacy_suite_progress(suite, manifest)
+        summary_suite["progress"] = progress
+        phase = _suite_phase(suite)
+        if phase:
+            summary_suite["phase"] = phase
+        if phase_progress is not None:
+            summary_suite["phase_progress"] = phase_progress
+        suites.append(summary_suite)
     counts = {
         status: sum(suite["status"] == status for suite in manifest["suites"])
         for status in ("created", "running", "succeeded", "skipped", "failed")
@@ -134,6 +191,13 @@ def campaign_summary(manifest: dict[str, Any]) -> dict[str, Any]:
         "counts": counts,
         "suites": suites,
     }
+
+
+def _suite_progress(
+    suite_id: str, *, limit: int | None, candidate_count: int
+) -> dict[str, int]:
+    expected = limit or suite_by_id(suite_id).expected_samples
+    return {"completed": 0, "total": (expected or 0) * candidate_count}
 
 
 def create_campaign(
@@ -206,6 +270,10 @@ def create_campaign(
                 "bridge": select_bridge(suite_by_id(suite_id)).id,
                 "status": "created",
                 "attempts": 0,
+                "progress": _suite_progress(
+                    suite_id, limit=limit, candidate_count=len(candidates)
+                ),
+                "full_progress_by_phase": {},
             }
             for suite_id in suite_ids
         ],
@@ -234,23 +302,42 @@ def _record_run_event(
     event: dict[str, Any],
 ) -> None:
     event_type = str(event.get("event_type", ""))
-    suite_state["phase"] = event.get("phase")
+    event_phase = event.get("phase")
+    if isinstance(event_phase, str) and event_phase:
+        suite_state["phase"] = event_phase
+    phase = str(suite_state.get("phase") or "")
     details = event.get("details")
+    if event_type == "phase_started":
+        suite_state.pop("phase_progress", None)
     if event_type == "phase_progress" and isinstance(details, dict):
-        suite_state["progress"] = {
+        suite_state["phase_progress"] = {
             "completed": details.get("completed"),
             "total": details.get("total"),
         }
+        if phase.startswith("eval-"):
+            by_phase = suite_state.setdefault("full_progress_by_phase", {})
+            by_phase[phase] = suite_state["phase_progress"]
+            suite_state["progress"]["completed"] = sum(
+                int(progress.get("completed", 0))
+                for progress in by_phase.values()
+                if isinstance(progress, dict)
+            )
     if event_type in {"phase_started", "phase_progress", "run_finished"}:
+        event_details: dict[str, Any] = {"run_phase": event.get("phase")}
+        if event_type == "phase_progress":
+            event_details.update(suite_state.get("progress", {}))
+            phase_progress = suite_state.get("phase_progress", {})
+            event_details.update(
+                {
+                    "phase_completed": phase_progress.get("completed"),
+                    "phase_total": phase_progress.get("total"),
+                }
+            )
         sink.emit(
             f"suite_{event_type}",
             phase=str(suite_state["id"]),
             status=str(event.get("status") or "running"),
-            details=(
-                suite_state.get("progress", {})
-                if event_type == "phase_progress"
-                else {"run_phase": event.get("phase")}
-            ),
+            details=event_details,
         )
     write_campaign(campaign_dir, manifest)
 
@@ -264,6 +351,15 @@ def run_campaign(campaign_dir: Path, *, health_checks: bool = True) -> None:
         stream=sys.stdout,
     )
     candidates = [_candidate_from_dict(item) for item in manifest["candidates"]]
+    for suite_state in manifest["suites"]:
+        expected_progress = _suite_progress(
+            str(suite_state["id"]),
+            limit=manifest.get("limit"),
+            candidate_count=len(candidates),
+        )
+        if suite_state.get("progress", {}).get("total") != expected_progress["total"]:
+            suite_state["progress"] = expected_progress
+            suite_state["full_progress_by_phase"] = {}
     records_root = Path(str(manifest["records_root"]))
     with RunLock(records_root / "campaign.lock", str(manifest["campaign_id"])):
         manifest["status"] = "running"

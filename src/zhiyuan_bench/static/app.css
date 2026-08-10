@@ -839,9 +839,22 @@ tbody tr:hover td {
 .progress-cell {
   display: grid;
   min-width: 180px;
+  gap: 4px;
+}
+
+.progress-overall {
+  display: grid;
   align-items: center;
-  gap: 8px;
   grid-template-columns: minmax(80px, 1fr) auto;
+  gap: 8px;
+}
+
+.progress-phase {
+  overflow: hidden;
+  color: var(--zy-text-secondary);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 progress {
