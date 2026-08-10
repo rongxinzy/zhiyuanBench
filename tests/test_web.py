@@ -130,6 +130,13 @@ class WebTests(unittest.TestCase):
         self.assertEqual(len(branches), 1)
         self.assertEqual(len(branches[0]["revision"]), 40)
 
+    def test_index_exposes_solo_and_comparison_modes(self) -> None:
+        response = self.client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('name="campaign-mode" value="solo"', response.text)
+        self.assertIn('name="campaign-mode" value="comparison"', response.text)
+
     def test_readiness_reports_missing_configuration_without_values(self) -> None:
         with patch.dict(
             os.environ,

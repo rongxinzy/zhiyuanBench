@@ -61,15 +61,20 @@
 
         <form id="campaign-form" class="workspace-form">
           <section class="form-section">
+            <fieldset class="mode-switch">
+              <legend class="sr-only" data-i18n="runMode">评测模式</legend>
+              <label class="mode-option"><input type="radio" name="campaign-mode" value="solo"><span data-i18n="soloMode">单分支</span></label>
+              <label class="mode-option"><input type="radio" name="campaign-mode" value="comparison" checked><span data-i18n="comparisonMode">分支对比</span></label>
+            </fieldset>
             <div class="section-heading"><h2 data-i18n="branches">测试分支</h2><span data-i18n="immutableSha">启动后固定为 commit SHA</span></div>
-            <div class="branch-grid">
+            <div class="branch-grid" data-mode="comparison">
               <fieldset class="branch-field">
-                <label for="baseline-branch" data-i18n="baseline">基线分支</label>
+                <label id="primary-branch-label" for="baseline-branch" data-i18n="baseline">基线分支</label>
                 <select id="baseline-branch" required aria-busy="true"><option data-i18n="loading">加载中</option></select>
                 <label class="inline-check"><input id="baseline-reviewer" type="checkbox"><span data-i18n="requireReviewer">要求 reviewer subagent</span></label>
               </fieldset>
-              <div class="compare-mark" aria-hidden="true">VS</div>
-              <fieldset class="branch-field">
+              <div class="compare-mark comparison-only" aria-hidden="true">VS</div>
+              <fieldset class="branch-field comparison-only">
                 <label for="candidate-branch" data-i18n="candidate">候选分支</label>
                 <select id="candidate-branch" required aria-busy="true"><option data-i18n="loading">加载中</option></select>
                 <label class="inline-check"><input id="candidate-reviewer" type="checkbox" checked><span data-i18n="requireReviewer">要求 reviewer subagent</span></label>

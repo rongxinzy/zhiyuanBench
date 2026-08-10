@@ -20,6 +20,7 @@
   --zy-warning: oklch(0.769 0.188 70.08);
   --zy-shadow-overlay: 0 10px 24px oklch(0 0 0 / 12%);
   --zy-shadow-tooltip: 0 8px 16px oklch(0 0 0 / 10%);
+  --zy-shadow-control: 0 1px 3px oklch(0 0 0 / 10%);
   --zy-radius-control: 8px;
   --zy-radius-panel: 10px;
   --pico-font-family: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
@@ -76,6 +77,17 @@
 * {
   box-sizing: border-box;
   letter-spacing: 0;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 html,
@@ -514,11 +526,70 @@ input[type="checkbox"]:checked {
   font-weight: 600;
 }
 
+.mode-switch {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  width: min(100%, 288px);
+  margin: 0 0 16px;
+  padding: 3px;
+  border: 1px solid var(--zy-border);
+  border-radius: var(--zy-radius-control);
+  background: var(--zy-surface-raised);
+}
+
+.mode-option {
+  position: relative;
+  margin: 0;
+  cursor: pointer;
+}
+
+.mode-option input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.mode-option span {
+  display: grid;
+  min-height: 32px;
+  place-items: center;
+  border-radius: calc(var(--zy-radius-control) - 2px);
+  color: var(--zy-text-secondary);
+  font-size: 13px;
+  font-weight: 400;
+  pointer-events: none;
+  transition: background 150ms ease-out, color 150ms ease-out, box-shadow 150ms ease-out;
+}
+
+.mode-option:hover span {
+  background: var(--zy-surface);
+}
+
+.mode-option:has(input:checked) span {
+  background: var(--zy-surface);
+  color: var(--zy-foreground);
+  font-weight: 600;
+  box-shadow: var(--zy-shadow-control);
+}
+
+.mode-option input:focus-visible + span {
+  outline: 2px solid var(--zy-primary);
+  outline-offset: 2px;
+}
+
 .branch-grid {
   display: grid;
   align-items: center;
   gap: 16px;
   grid-template-columns: minmax(0, 1fr) 36px minmax(0, 1fr);
+}
+
+.branch-grid[data-mode="solo"] {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .branch-field {
