@@ -25,13 +25,16 @@ from starlette.staticfiles import StaticFiles
 
 from zhiyuan_bench.campaigns import (
     CAMPAIGN_SUITES,
+    TERMINAL_CAMPAIGN_STATUSES,
     campaign_summary,
     create_campaign,
+    finalize_interrupted_campaign,
     read_campaign,
 )
 from zhiyuan_bench.locking import RunLock
 from zhiyuan_bench.persistence import atomic_write_text
 from zhiyuan_bench.registry import select_bridge, suite_by_id
+from zhiyuan_bench.reports import render_campaign_report, write_campaign_report
 from zhiyuan_bench.worktrees import list_local_branches
 
 STATIC_ROOT = Path(__file__).with_name("static")
@@ -39,11 +42,6 @@ MODEL_REQUIRED_ENVIRONMENT = (
     "ZHIYUAN_MODEL_BASE_URL",
     "ZHIYUAN_MODEL_ID",
 )
-TERMINAL_CAMPAIGN_STATUSES = frozenset(
-    {"succeeded", "completed_with_issues", "cancelled"}
-)
-
-
 @dataclass(frozen=True)
 class WebConfig:
     repo: Path
@@ -175,6 +173,47 @@ def _campaign_dir(config: WebConfig, campaign_id: str) -> Path:
     return path
 
 
+def _runner_pid_from(path: Path) -> int | None:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+        pid = int(value.get("pid", -1))
+    except (OSError, TypeError, ValueError):
+        return None
+    return pid if pid > 0 else None
+
+
+def _campaign_runner_alive(campaign_dir: Path, manifest: dict[str, Any]) -> bool:
+    lock_path = Path(str(manifest["records_root"])) / "campaign.lock"
+    try:
+        lock = json.loads(lock_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        lock = {}
+    if lock.get("run_id") == manifest.get("campaign_id"):
+        try:
+            if _process_alive(int(lock.get("pid", -1))):
+                return True
+        except (TypeError, ValueError):
+            pass
+    runner = manifest.get("runner")
+    if isinstance(runner, dict):
+        try:
+            if _process_alive(int(runner.get("pid", -1))):
+                return True
+        except (TypeError, ValueError):
+            pass
+    launch_pid = _runner_pid_from(campaign_dir / "web-runner.json")
+    return launch_pid is not None and _process_alive(launch_pid)
+
+
+def _load_campaign(campaign_dir: Path) -> dict[str, Any]:
+    manifest = read_campaign(campaign_dir)
+    if manifest.get("status") == "running" and not _campaign_runner_alive(
+        campaign_dir, manifest
+    ):
+        manifest = finalize_interrupted_campaign(campaign_dir, best_effort=True)
+    return manifest
+
+
 def _campaigns(config: WebConfig) -> list[dict[str, Any]]:
     if not config.records_root.is_dir():
         return []
@@ -183,7 +222,7 @@ def _campaigns(config: WebConfig) -> list[dict[str, Any]]:
         if not path.is_dir() or not (path / "campaign.json").is_file():
             continue
         try:
-            records.append(campaign_summary(read_campaign(path)))
+            records.append(campaign_summary(_load_campaign(path)))
         except (OSError, ValueError):
             continue
     return records
@@ -454,7 +493,7 @@ def create_app(
     async def campaign_detail(request: Request) -> Response:
         try:
             path = _campaign_dir(config, request.path_params["campaign_id"])
-            summary = await run_in_threadpool(campaign_summary, read_campaign(path))
+            summary = await run_in_threadpool(campaign_summary, _load_campaign(path))
         except (FileNotFoundError, OSError, ValueError):
             return _error("Campaign not found", 404)
         return JSONResponse(summary)
@@ -506,7 +545,7 @@ def create_app(
     async def campaign_run(request: Request) -> Response:
         try:
             path = _campaign_dir(config, request.path_params["campaign_id"])
-            campaign = read_campaign(path)
+            campaign = _load_campaign(path)
             suite_ids = [str(item["id"]) for item in campaign["suites"]]
             run_readiness = await run_in_threadpool(_readiness, suite_ids)
             if any(not suite["ready"] for suite in run_readiness["suites"]):
@@ -529,9 +568,17 @@ def create_app(
     async def campaign_report(request: Request) -> Response:
         try:
             path = _campaign_dir(config, request.path_params["campaign_id"])
+            manifest = await run_in_threadpool(_load_campaign, path)
+            summary = campaign_summary(manifest)
+            try:
+                await run_in_threadpool(write_campaign_report, path, summary)
+            except OSError:
+                return Response(
+                    render_campaign_report(summary),
+                    media_type="text/html",
+                    headers={"Cache-Control": "no-cache"},
+                )
             report = path / "report" / "report.html"
-            if not report.is_file():
-                raise FileNotFoundError(report)
         except FileNotFoundError:
             return _error("Campaign report not found", 404)
         return FileResponse(

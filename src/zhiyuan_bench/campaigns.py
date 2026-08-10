@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 import uuid
@@ -24,6 +25,9 @@ from zhiyuan_bench.worktrees import (
 )
 
 CAMPAIGN_SCHEMA_VERSION = 1
+TERMINAL_CAMPAIGN_STATUSES = frozenset(
+    {"succeeded", "completed_with_issues", "cancelled", "interrupted"}
+)
 CAMPAIGN_SUITES = (
     "agentbench-os-dev",
     "codeipi",
@@ -170,8 +174,23 @@ def campaign_summary(manifest: dict[str, Any]) -> dict[str, Any]:
         suites.append(summary_suite)
     counts = {
         status: sum(suite["status"] == status for suite in manifest["suites"])
-        for status in ("created", "running", "succeeded", "skipped", "failed")
+        for status in (
+            "created",
+            "running",
+            "succeeded",
+            "skipped",
+            "failed",
+            "cancelled",
+            "interrupted",
+        )
     }
+    campaign_status = str(manifest["status"])
+    report_kind = {
+        "succeeded": "complete",
+        "completed_with_issues": "completed_with_issues",
+        "cancelled": "interrupted",
+        "interrupted": "interrupted",
+    }.get(campaign_status, "partial")
     return {
         "schema_version": CAMPAIGN_SCHEMA_VERSION,
         "campaign_id": manifest["campaign_id"],
@@ -180,6 +199,7 @@ def campaign_summary(manifest: dict[str, Any]) -> dict[str, Any]:
         "started_at": manifest.get("started_at"),
         "completed_at": manifest.get("completed_at"),
         "current_suite": manifest.get("current_suite"),
+        "failure": manifest.get("failure"),
         "candidates": [
             {
                 "label": item["label"],
@@ -189,8 +209,74 @@ def campaign_summary(manifest: dict[str, Any]) -> dict[str, Any]:
             for item in manifest["candidates"]
         ],
         "counts": counts,
+        "report": {
+            "kind": report_kind,
+            "valid_comparisons": counts["succeeded"],
+            "selected_suites": len(manifest["suites"]),
+        },
         "suites": suites,
     }
+
+
+def _finish_interrupted_campaign(
+    manifest: dict[str, Any],
+    *,
+    status: str,
+    error_type: str,
+    message: str,
+) -> None:
+    completed_at = datetime.now(UTC).isoformat()
+    failure = {"type": error_type, "message": message}
+    current_suite = manifest.get("current_suite")
+    for suite in manifest["suites"]:
+        if suite.get("status") != "running" and suite.get("id") != current_suite:
+            continue
+        suite["status"] = status
+        suite["failure"] = failure
+        suite["completed_at"] = completed_at
+        break
+    manifest["status"] = status
+    manifest["failure"] = failure
+    manifest["completed_at"] = completed_at
+    manifest.pop("current_suite", None)
+    runner = manifest.setdefault("runner", {})
+    runner["ended_at"] = completed_at
+
+
+def finalize_interrupted_campaign(
+    campaign_dir: Path,
+    *,
+    error_type: str = "RunnerInterrupted",
+    message: str = "Campaign runner stopped before reaching a terminal state",
+    best_effort: bool = False,
+) -> dict[str, Any]:
+    """Finalize an orphaned campaign and materialize its partial report."""
+    manifest = read_campaign(campaign_dir)
+    if manifest.get("status") != "running":
+        write_campaign(campaign_dir, manifest)
+        return manifest
+    _finish_interrupted_campaign(
+        manifest,
+        status="interrupted",
+        error_type=error_type,
+        message=message,
+    )
+    try:
+        write_campaign(campaign_dir, manifest)
+    except OSError:
+        if not best_effort:
+            raise
+        return manifest
+    try:
+        EventSink(campaign_dir / "events.jsonl", str(manifest["campaign_id"])).emit(
+            "campaign_finished",
+            status="interrupted",
+            details={"error_type": error_type},
+        )
+    except OSError:
+        if not best_effort:
+            raise
+    return manifest
 
 
 def _suite_progress(
@@ -366,7 +452,12 @@ def run_campaign(campaign_dir: Path, *, health_checks: bool = True) -> None:
         manifest["started_at"] = (
             manifest.get("started_at") or datetime.now(UTC).isoformat()
         )
+        manifest["runner"] = {
+            "pid": os.getpid(),
+            "started_at": datetime.now(UTC).isoformat(),
+        }
         manifest.pop("completed_at", None)
+        manifest.pop("failure", None)
         write_campaign(campaign_dir, manifest)
         sink.emit("campaign_started", status="running")
         try:
@@ -436,11 +527,32 @@ def run_campaign(campaign_dir: Path, *, health_checks: bool = True) -> None:
             )
             manifest["status"] = "completed_with_issues" if has_issues else "succeeded"
             manifest["completed_at"] = datetime.now(UTC).isoformat()
+            manifest["runner"]["ended_at"] = manifest["completed_at"]
             write_campaign(campaign_dir, manifest)
             sink.emit("campaign_finished", status=manifest["status"])
-        except KeyboardInterrupt:
-            manifest["status"] = "cancelled"
-            manifest["completed_at"] = datetime.now(UTC).isoformat()
+        except KeyboardInterrupt as error:
+            _finish_interrupted_campaign(
+                manifest,
+                status="cancelled",
+                error_type=type(error).__name__,
+                message="Campaign cancelled by keyboard interrupt",
+            )
             write_campaign(campaign_dir, manifest)
             sink.emit("campaign_finished", status="cancelled")
             raise
+        except BaseException as error:
+            _finish_interrupted_campaign(
+                manifest,
+                status="interrupted",
+                error_type=type(error).__name__,
+                message=str(error) or "Campaign runner stopped unexpectedly",
+            )
+            write_campaign(campaign_dir, manifest)
+            sink.emit(
+                "campaign_finished",
+                status="interrupted",
+                details={"error_type": type(error).__name__},
+            )
+            raise
+        finally:
+            write_campaign(campaign_dir, manifest)
