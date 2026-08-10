@@ -165,9 +165,11 @@ def build_phases(
     reviewer_required_candidates: set[str] | None = None,
 ) -> list[Phase]:
     phases: list[Phase] = []
-    reviewer_required = reviewer_required_candidates or {
-        candidate.label for candidate in candidates
-    }
+    reviewer_required = (
+        {candidate.label for candidate in candidates}
+        if reviewer_required_candidates is None
+        else reviewer_required_candidates
+    )
     python = _python(workspace)
     if suite.adapter == "agentrl-agentbench-fc":
         for candidate in candidates:
@@ -327,30 +329,49 @@ def build_phases(
                     environment={},
                 )
             )
-    if suite.production_policy and len(candidates) == 2:
+    if len(candidates) in {1, 2}:
         report_dir = run_dir / "report"
         expected = limit or suite.expected_samples
-        command = (
+        command: tuple[str, ...] = (
             python,
             "tools/zhiyuan/report_comparison.py",
-            "--baseline",
-            str(run_dir / "evals" / candidates[0].label / "full"),
-            "--candidate",
-            str(run_dir / "evals" / candidates[1].label / "full"),
-            "--output-dir",
-            str(report_dir),
-            "--expected-samples",
-            str(expected),
-            "--require-production-agent",
         )
-        if candidates[0].label in reviewer_required:
-            command += ("--require-baseline-reviewer-subagent",)
-        if candidates[1].label in reviewer_required:
-            command += ("--require-candidate-reviewer-subagent",)
+        if len(candidates) == 1:
+            candidate = candidates[0]
+            command += (
+                "--solo",
+                str(run_dir / "evals" / candidate.label / "full"),
+                "--label",
+                candidate.label,
+            )
+        else:
+            command += (
+                "--baseline",
+                str(run_dir / "evals" / candidates[0].label / "full"),
+                "--candidate",
+                str(run_dir / "evals" / candidates[1].label / "full"),
+            )
+        command += ("--output-dir", str(report_dir))
+        if expected is not None:
+            command += ("--expected-samples", str(expected))
+        if suite.production_policy:
+            command += ("--require-production-agent",)
+        if "subagent" in bridge.capabilities:
+            if len(candidates) == 1 and candidates[0].label in reviewer_required:
+                command += ("--require-reviewer-subagent",)
+            elif len(candidates) == 2:
+                if candidates[0].label in reviewer_required:
+                    command += ("--require-baseline-reviewer-subagent",)
+                if candidates[1].label in reviewer_required:
+                    command += ("--require-candidate-reviewer-subagent",)
         phases.append(
             Phase(
                 id="report",
-                label="Validate and generate comparison report",
+                label=(
+                    "Validate and generate solo report"
+                    if len(candidates) == 1
+                    else "Validate and generate comparison report"
+                ),
                 command=command,
                 environment={},
             )

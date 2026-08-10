@@ -130,6 +130,13 @@ class WebTests(unittest.TestCase):
         self.assertEqual(len(branches), 1)
         self.assertEqual(len(branches[0]["revision"]), 40)
 
+    def test_index_exposes_solo_and_comparison_modes(self) -> None:
+        response = self.client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('name="campaign-mode" value="solo"', response.text)
+        self.assertIn('name="campaign-mode" value="comparison"', response.text)
+
     def test_readiness_reports_missing_configuration_without_values(self) -> None:
         with patch.dict(
             os.environ,
@@ -309,6 +316,26 @@ class WebTests(unittest.TestCase):
 
         with self.assertRaisesRegex(CampaignConflictError, "already active"):
             CampaignLauncher(self.config).launch(path)
+
+    def test_launcher_isolates_runner_from_web_console_signals(self) -> None:
+        path = self._campaign()
+        with patch("zhiyuan_bench.web.subprocess.Popen") as popen:
+            popen.return_value.pid = 4321
+
+            launch = CampaignLauncher(self.config).launch(path)
+
+        self.assertEqual(launch["pid"], 4321)
+        options = popen.call_args.kwargs
+        if os.name == "nt":
+            self.assertEqual(
+                options["creationflags"], subprocess.CREATE_NEW_PROCESS_GROUP
+            )
+            self.assertNotIn("start_new_session", options)
+        else:
+            self.assertTrue(options["start_new_session"])
+            self.assertNotIn("creationflags", options)
+        self.assertIs(options["stdin"], subprocess.DEVNULL)
+        self.assertTrue(options["close_fds"])
 
     def test_reads_existing_events_as_finite_sse(self) -> None:
         path = self._campaign()

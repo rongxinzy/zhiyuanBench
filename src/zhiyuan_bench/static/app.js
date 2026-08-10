@@ -1,12 +1,13 @@
 const I18N = {
   zh: {
     brand: "知远评测", connecting: "连接中", connected: "服务已连接", disconnected: "连接已断开",
-    newRun: "新建评测", records: "测试记录", recordsAt: "记录目录", newEvaluation: "新建对比评测",
+    newRun: "新建评测", records: "测试记录", recordsAt: "记录目录", newEvaluation: "新建评测",
+    runMode: "评测模式", soloMode: "单分支", comparisonMode: "分支对比", soloBranch: "测试分支",
     branches: "测试分支", immutableSha: "启动后固定为 commit SHA", baseline: "基线分支", candidate: "候选分支",
     requireReviewer: "要求 reviewer subagent", loading: "加载中", suites: "测试集", selectAll: "全选",
     suite: "测试集", bridge: "Bridge", samples: "样本", runSettings: "运行设置", sampleLimit: "样本上限",
     concurrency: "并发数", start: "开始评测", recordsSubtitle: "按创建时间倒序", created: "创建时间",
-    comparison: "分支对比", status: "状态", noRecords: "暂无测试记录", backRecords: "返回记录",
+    comparison: "分支", status: "状态", noRecords: "暂无测试记录", backRecords: "返回记录",
     staticReport: "静态报告", resume: "恢复评测", completed: "已完成", currentSuite: "当前测试集",
     progress: "进度", attempts: "尝试", liveEvents: "实时事件", full: "完整", dynamic: "动态",
     chooseSuite: "至少选择一个测试集", differentBranches: "请选择两个不同分支", creating: "正在创建记录",
@@ -19,12 +20,13 @@ const I18N = {
   },
   en: {
     brand: "Zhiyuan Bench", connecting: "Connecting", connected: "Service connected", disconnected: "Disconnected",
-    newRun: "New run", records: "Records", recordsAt: "Records root", newEvaluation: "New comparison",
+    newRun: "New run", records: "Records", recordsAt: "Records root", newEvaluation: "New evaluation",
+    runMode: "Evaluation mode", soloMode: "Solo", comparisonMode: "Comparison", soloBranch: "Test branch",
     branches: "Branches", immutableSha: "Pinned to commit SHAs at creation", baseline: "Baseline", candidate: "Candidate",
     requireReviewer: "Require reviewer subagent", loading: "Loading", suites: "Suites", selectAll: "Select all",
     suite: "Suite", bridge: "Bridge", samples: "Samples", runSettings: "Run settings", sampleLimit: "Sample limit",
     concurrency: "Concurrency", start: "Start evaluation", recordsSubtitle: "Newest first", created: "Created",
-    comparison: "Branch comparison", status: "Status", noRecords: "No records", backRecords: "Back to records",
+    comparison: "Branches", status: "Status", noRecords: "No records", backRecords: "Back to records",
     staticReport: "Static report", resume: "Resume", completed: "Completed", currentSuite: "Current suite",
     progress: "Progress", attempts: "Attempts", liveEvents: "Live events", full: "Full", dynamic: "Dynamic",
     chooseSuite: "Select at least one suite", differentBranches: "Select two different branches", creating: "Creating record",
@@ -44,6 +46,7 @@ const state = {
   branches: [],
   campaigns: [],
   readiness: null,
+  campaignMode: "comparison",
   currentCampaign: null,
   currentView: "create",
   eventSource: null,
@@ -121,10 +124,24 @@ function applyTranslations() {
   $("#refresh-history").dataset.zyTooltip = t("refresh");
   $("#refresh-history").ariaLabel = t("refresh");
   $("#sample-limit").placeholder = t("full");
+  setCampaignMode(state.campaignMode);
   renderSuites();
   renderHistory();
   renderReadiness();
   if (state.currentCampaign) renderDetail(state.currentCampaign);
+}
+
+function setCampaignMode(mode) {
+  state.campaignMode = mode === "solo" ? "solo" : "comparison";
+  const comparison = state.campaignMode === "comparison";
+  const selected = $(`input[name="campaign-mode"][value="${state.campaignMode}"]`);
+  if (selected) selected.checked = true;
+  $(".branch-grid").dataset.mode = state.campaignMode;
+  $$(".comparison-only").forEach((node) => { node.hidden = !comparison; });
+  $("#candidate-branch").required = comparison;
+  const primaryLabel = $("#primary-branch-label");
+  primaryLabel.dataset.i18n = comparison ? "baseline" : "soloBranch";
+  primaryLabel.textContent = t(primaryLabel.dataset.i18n);
 }
 
 function setTheme(theme) {
@@ -452,10 +469,14 @@ async function submitCampaign(event) {
   const validation = $("#form-validation");
   validation.textContent = "";
   if (!selectedSuites.length) { validation.textContent = t("chooseSuite"); return; }
-  if (baseline === candidate) { validation.textContent = t("differentBranches"); return; }
+  const comparison = state.campaignMode === "comparison";
+  if (comparison && baseline === candidate) { validation.textContent = t("differentBranches"); return; }
   const reviewers = [];
-  if ($("#baseline-reviewer").checked) reviewers.push("baseline");
-  if ($("#candidate-reviewer").checked) reviewers.push("candidate");
+  if ($("#baseline-reviewer").checked) reviewers.push(comparison ? "baseline" : "candidate");
+  if (comparison && $("#candidate-reviewer").checked) reviewers.push("candidate");
+  const branches = comparison
+    ? [{ label: "baseline", ref: baseline }, { label: "candidate", ref: candidate }]
+    : [{ label: "candidate", ref: baseline }];
   const limitValue = $("#sample-limit").value;
   const button = $("#start-run");
   button.disabled = true;
@@ -465,7 +486,7 @@ async function submitCampaign(event) {
     const campaign = await api("/api/campaigns", {
       method: "POST",
       body: JSON.stringify({
-        branches: [{ label: "baseline", ref: baseline }, { label: "candidate", ref: candidate }],
+        branches,
         suites: selectedSuites,
         reviewer_required_candidates: reviewers,
         limit: limitValue ? Number(limitValue) : null,
@@ -548,6 +569,7 @@ document.addEventListener("DOMContentLoaded", () => {
     $$(".suite-checkbox:not(:disabled)").forEach((box) => { box.checked = event.target.checked; });
     updateSuiteSelection();
   });
+  $$(`input[name="campaign-mode"]`).forEach((input) => input.addEventListener("change", () => setCampaignMode(input.value)));
   $("#campaign-form").addEventListener("submit", submitCampaign);
   $("#refresh-history").addEventListener("click", loadHistory);
   $("#resume-run").addEventListener("click", resumeCurrent);

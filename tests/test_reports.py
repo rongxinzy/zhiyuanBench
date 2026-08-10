@@ -98,6 +98,28 @@ class ReportTests(unittest.TestCase):
         self.assertIn("runner stopped", report)
         self.assertNotIn('http-equiv="refresh"', report)
 
+    def test_solo_report_uses_single_branch_language(self) -> None:
+        report = render_campaign_report(
+            {
+                "campaign_id": "solo",
+                "status": "completed_with_issues",
+                "created_at": "2026-08-06T00:00:00+00:00",
+                "report": {"kind": "completed_with_issues", "mode": "solo"},
+                "candidates": [
+                    {
+                        "label": "candidate",
+                        "source_ref": "feature",
+                        "revision": "a" * 40,
+                    }
+                ],
+                "suites": [],
+            }
+        )
+
+        self.assertIn("单分支异常结算报告", report)
+        self.assertIn("有效单分支结果", report)
+        self.assertNotIn("有效对比", report)
+
 
 if __name__ == "__main__":
     unittest.main()

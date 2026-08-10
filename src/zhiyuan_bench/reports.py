@@ -49,22 +49,47 @@ def _suite_row(suite: dict[str, Any]) -> str:
 
 
 def _report_notice(summary: dict[str, Any]) -> str:
-    kind = str((summary.get("report") or {}).get("kind", "partial"))
-    title, description = {
-        "complete": ("完整报告", "所有测试集均已完成并通过结果验证。"),
-        "completed_with_issues": (
-            "异常结算报告",
-            "评测流程已结束；只有标记为 succeeded 的测试集构成有效对比。",
-        ),
-        "interrupted": (
-            "中断报告",
-            "报告保留中断前的进度和错误；未完成测试集不构成有效对比。",
-        ),
-        "partial": (
-            "部分报告",
-            "评测仍在进行或尚未开始；此页面会随持久化进度更新。",
-        ),
-    }.get(kind, ("部分报告", "当前记录尚未形成完整对比结果。"))
+    metadata = summary.get("report") or {}
+    kind = str(metadata.get("kind", "partial"))
+    mode = str(
+        metadata.get(
+            "mode", "solo" if len(summary.get("candidates", [])) == 1 else "comparison"
+        )
+    )
+    notices = {
+        "comparison": {
+            "complete": ("完整报告", "所有测试集均已完成并通过结果验证。"),
+            "completed_with_issues": (
+                "异常结算报告",
+                "评测流程已结束；只有标记为 succeeded 的测试集构成有效对比。",
+            ),
+            "interrupted": (
+                "中断报告",
+                "报告保留中断前的进度和错误；未完成测试集不构成有效对比。",
+            ),
+            "partial": (
+                "部分报告",
+                "评测仍在进行或尚未开始；此页面会随持久化进度更新。",
+            ),
+        },
+        "solo": {
+            "complete": ("单分支报告", "所有测试集均已完成并通过结果验证。"),
+            "completed_with_issues": (
+                "单分支异常结算报告",
+                "评测流程已结束；只有标记为 succeeded 的测试集构成有效单分支结果。",
+            ),
+            "interrupted": (
+                "单分支中断报告",
+                "报告保留中断前的进度和错误；未完成测试集不构成有效结果。",
+            ),
+            "partial": (
+                "单分支部分报告",
+                "评测仍在进行或尚未开始；此页面会随持久化进度更新。",
+            ),
+        },
+    }
+    mode_notices = notices.get(mode, notices["comparison"])
+    title, description = mode_notices.get(kind, mode_notices["partial"])
     failure = summary.get("failure")
     failure_text = ""
     if isinstance(failure, dict) and failure.get("message"):

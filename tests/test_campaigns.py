@@ -208,9 +208,39 @@ class CampaignTests(unittest.TestCase):
         summary = campaign_summary(manifest)
 
         self.assertEqual(summary["report"]["kind"], "interrupted")
+        self.assertEqual(summary["report"]["mode"], "comparison")
+        self.assertEqual(summary["report"]["valid_results"], 0)
         self.assertEqual(summary["report"]["valid_comparisons"], 0)
         self.assertEqual(summary["counts"]["interrupted"], 1)
         self.assertEqual(summary["failure"]["message"], "runner stopped")
+
+    def test_summary_marks_single_candidate_campaign_as_solo(self) -> None:
+        manifest = {
+            "schema_version": 1,
+            "campaign_id": "solo",
+            "status": "succeeded",
+            "created_at": "2026-08-07T00:00:00+00:00",
+            "candidates": [
+                {
+                    "label": "candidate",
+                    "source_ref": "feature",
+                    "revision": "a" * 40,
+                }
+            ],
+            "suites": [
+                {
+                    "id": "agentbench-os-dev",
+                    "bridge": "headless-pi-production",
+                    "status": "succeeded",
+                }
+            ],
+        }
+
+        summary = campaign_summary(manifest)
+
+        self.assertEqual(summary["report"]["mode"], "solo")
+        self.assertEqual(summary["report"]["valid_results"], 1)
+        self.assertEqual(summary["report"]["valid_comparisons"], 0)
 
     def test_invalid_reviewer_label_does_not_create_worktrees(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
